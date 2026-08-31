@@ -374,7 +374,7 @@ class SimpleMVAR:
         }
 
     @timeout(600)
-    def fit_by_interval(self, n_ahead_irf: int = 100, use_irf: bool = True, parallel: bool = False, n_workers: Optional[int] = None) -> dict[pd.Timestamp, dict]:
+    def fit_by_interval(self, n_ahead_irf: int = 100, use_irf: bool = False, parallel: bool = False, n_workers: Optional[int] = None) -> dict[pd.Timestamp, dict]:
         """
         Estimate one model per interval and return alpha/beta/IRF/CS/HIS/ILS.
 
@@ -383,7 +383,7 @@ class SimpleMVAR:
         n_ahead_irf : int
             Number of periods ahead for IRF calculation
         use_irf : bool
-            Whether to compute IRF (expensive). Default True. Set to False for faster execution.
+            Whether to compute IRF (expensive). Default False. Set to True to enable.
         parallel : bool
             Whether to use parallel processing for fitting intervals (speedup on multicore systems)
         n_workers : Optional[int]
@@ -720,14 +720,12 @@ class VECMHasbrouck2:
         summaries = []
         details = {}
         for agg in aggs:
-            prices, fill_detail = data.agg_to_intervals(
-                agg,
+            price, fill_detail = data.agg_last_trade_to_intervals(
+                freq="10ms",
                 start=start,
                 end=end,
-                fill_gaps=fill_gaps,
-                max_fill_gap_ms=max_fill_gap_ms,
-                drop_both_stale=False,
-                stale_after_ms=None,
+                fill_gaps=False,
+                max_fill_gap_ms=None,
                 return_fill_diagnostics=True,
             )
 
@@ -1177,14 +1175,13 @@ class VECMHasbrouck2:
                     n_jobs=n_jobs,
                 )
 
-            prices = data.agg_to_intervals(
-                agg,
+            prices = data.agg_last_trade_to_intervals(
+                freq=agg,
                 start=start,
                 end=end,
                 fill_gaps=fill_gaps,
                 max_fill_gap_ms=max_fill_gap_ms,
-                drop_both_stale=drop_both_stale,
-                stale_after_ms=stale_after_ms,
+                rename_for_vecm=True,
             )
             if prices.empty:
                 raise ValueError(

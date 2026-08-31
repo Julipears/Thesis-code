@@ -1,0 +1,59 @@
+KM V8 FINAL METHODOLOGY (v8_regular_lm_daily_v4)
+=================================================
+
+Intended difference from saved event-store V5
+----------------------------------------------
+Only shock detection changes: prices are sampled on a complete regular
+one-second previous-tick grid and Lee-Mykland is evaluated on one-second log
+returns. Resolution, censoring, refractory filtering, and Kaplan-Meier fitting
+retain the saved event-store V5 definitions.
+
+Price grid and Lee-Mykland
+--------------------------
+- Last transaction in each one-second bin, ordered by Binance trade ID.
+- Empty seconds use the previous observed transaction price; hence they have a
+  zero return. A runtime assertion requires exactly 86,400 ordered timestamps
+  in every target UTC day.
+- LM is evaluated independently for spot and perpetual returns.
+- k = ceil(sqrt(365 * 24 * 60 * 60)) = 5,616 for continuously traded crypto.
+- The local BPV estimate contains exactly k-2 = 5,614 preceding BPV products,
+  matching movmean(bpv, [k-3 0]) in the supplied MATLAB implementation. These
+  products use returns through r(i-1) and reach back 5,615 seconds to r(i-k+1).
+- LM log prices are calculated in float64 from the retained last-trade prices.
+- Preceding-day data supplies the BPV lookback at the start of each target day.
+- n = 86,400 and the extreme-value threshold is recalculated for every UTC day.
+- Significance is 0.001, matching V5.
+- A detected second is mapped to the final actual origin-market trade in that
+  second.
+
+Refractory and resolution (same as saved event-store V5)
+--------------------------------------------------------
+- Five-second clock-time greedy refractory filter, continuous across midnight.
+- Baseline is log(perp)-log(spot) immediately before the mapped shock trade.
+- Initial displacement is the absolute basis change at the shock trade.
+- Search begins at the next irregular event-time observation.
+- Resolution means 90% of the initial displacement has disappeared, subject to
+  a 0.5 bp minimum target band and a 0.25 second sustained-entry requirement.
+- An origin-market reversal can resolve the basis. This is also how the saved
+  event-store V5 module behaves; the responding market is not required to move.
+- Maximum follow-up is 120 seconds. Unresolved episodes are right-censored at
+  120 seconds, and episodes without a full horizon are excluded.
+
+Kaplan-Meier output
+-------------------
+- KaplanMeierFitter uses Length as duration and Status as event indicator.
+- Monthly comparison graphs pool episode-level observations over the displayed
+  date range; they do not average daily KM curves.
+- The y-axis is survival probability: probability the basis dislocation remains
+  unresolved. Curves include confidence intervals and legend sample sizes.
+- V5 comparison rows are restricted to the 90% resolution definition and
+  deduplicated by start timestamp.
+
+Audit results
+-------------
+- Preserved V5 bytecode and the current resolution/refractory implementation
+  produced identical outputs in a behavioral equivalence test.
+- BTC inverse 2025-07-06 passed the complete-grid check with n=86,400.
+- Two independent audit runs produced byte-identical spot and perpetual event
+  parquet files after exchange trade-ID ordering was retained.
+- Pre-v4 V8 pilot and July 2025 outputs are superseded and must not be used.

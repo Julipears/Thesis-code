@@ -1,0 +1,43 @@
+# Survival-analysis data, caches, and results
+sa_btc_um/
+sa_btc_cm/
+sa_eth_um/
+sa_eth_cm/
+sa_results/
+
+# VECM/Hasbrouck results
+vecm_hasbrouck2_um/
+vecm_hasbrouck2_cm/
+vecm_hasbrouck2_btc_um/
+vecm_hasbrouck2_btc_cm/
+vecm_hasbrouck2_eth_um/
+vecm_hasbrouck2_eth_cm/
+vecm_hasbrouck3_btc_um/
+vecm_hasbrouck3_btc_cm/
+vecm_hasbrouck3_eth_um/
+vecm_hasbrouck3_eth_cm/
+
+# AFT model results
+aft_results_btc_um/
+aft_results_btc_cm/
+aft_results_eth_um/
+aft_results_eth_cm/
+
+# Audit outputs
+hasbrouck_spec_audit/
+
+aft_all_figures/
+aft_comparison_results/
+open_interest_figures/
+vecm_regime_heatmaps_april2023/
+latex_tables/
+
+__pycache__/
+*.py[cod]
+
+.jupyter-monitor/
+.jupyter-test/
+.ipynb_checkpoints/
+
+.kernel-restart.err.log
+.kernel-restart.out.log

@@ -309,6 +309,7 @@ def find_convergence_rigorous(df_ret, shock_events, first='spot',
     """
     
     # Calculate basis at each tick
+    # isn't this already the basis? don't need to change
     spot_price_cum = np.cumsum(df_ret['spot_ret'].to_numpy())
     perp_price_cum = np.cumsum(df_ret['perp_ret'].to_numpy())
     basis = perp_price_cum - spot_price_cum  # log price difference
@@ -1069,8 +1070,8 @@ def find_covariates(start, end, data, shocks_sp):
         
         hf_covariates.append({
             'event_tick': tick,
-            'vol_spot_5min': vol_spot_5min[tick],
-            'vol_perp_5min': vol_perp_5min[tick],
+            'vol_spot_5min': vol_spot_5min[tick-1],
+            'vol_perp_5min': vol_perp_5min[tick-1],
             'basis_level': basis_pd[tick-1],  # Pre-shock level
             # 'basis_vol_5min': basis_vol_5min[tick],
         })

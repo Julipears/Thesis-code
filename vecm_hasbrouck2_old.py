@@ -194,12 +194,10 @@ class SimpleMVAR:
         # solve the equation like a linear system for alpha and gammas
         xpx = X.T @ X
         xpy = X.T @ Y
-        # Use scipy inverse rather than NumPy's explicit inverse. Store the
-        # fitted objects on ``self`` because the public ``fit()`` helpers
-        # (gamma_matrix, summary, IRF, etc.) read these attributes.
-        xpxi = linalg.inv(xpx, overwrite_a=False)
-        self.b = xpxi @ xpy
-        self.resid = Y - X @ self.b
+        # Use scipy solver instead of explicit inverse (2-3x faster)
+        xpxi = linalg.inv(xpx, overwrite_a=False)  # overwrite_a=False for safety
+        b = xpxi @ xpy
+        resid = Y - X @ b
 
         n_obs = Y.shape[0]
         self.e_cov = (self.resid.T @ self.resid) / n_obs
@@ -632,707 +630,139 @@ class VECMHasbrouck2:
     def __init__(self, ticker, source, cm_um='um'):
         '''
         ticker: string
-        source: exchange/data source
-        cm_um: Binance coin-margined (``cm``) or USDT-margined (``um``)
+        start: datetime.datetime
+        end: datetime.datetime
+        agg: data aggregation interval
+        period: periodicity of data sampling
         '''
         self.ticker = ticker
         self.source = source
         self.cm_um = cm_um
 
-    @staticmethod
-    def _cache_value(value) -> str:
-        """Return a filename-safe representation of a numeric option."""
-        return str(value).replace('.', 'p').replace('-', 'm')
-
-    def _cache_prefix(
-        self,
-        prefix: str,
-        *,
-        fill_gaps: bool,
-        max_fill_gap_ms,
-        drop_both_stale: bool,
-        stale_after_ms,
-    ) -> str:
-        """Build a cache namespace that reflects the aggregation settings."""
-        cache_prefix = f"{prefix}_alignedv2"
-        if fill_gaps:
-            cache_prefix += "_fullgrid"
-        if max_fill_gap_ms is not None:
-            cache_prefix += f"_fill{self._cache_value(max_fill_gap_ms)}ms"
-        if drop_both_stale:
-            stale_tag = (
-                "all"
-                if stale_after_ms is None
-                else f"{self._cache_value(stale_after_ms)}ms"
-            )
-            cache_prefix += f"_dropstale{stale_tag}"
-        return cache_prefix
-
-    @staticmethod
-    def _days_to_pull(start, end) -> int:
-        """Pull enough daily files to cover the half-open range [start, end)."""
-        start_ts = pd.Timestamp(start)
-        end_ts = pd.Timestamp(end)
-        if end_ts <= start_ts:
-            raise ValueError("end must be later than start.")
-        # Add one day because the daily downloader is date-based and the
-        # aggregation step subsequently applies the exact [start, end) filter.
-        return max(1, int(np.ceil((end_ts - start_ts).total_seconds() / 86400.0)) + 1)
-
-    def check_staleness(
-        self,
-        start,
-        end,
-        aggs,
-        stale_after_ms=None,
-        *,
-        fill_gaps=False,
-        max_fill_gap_ms=None,
-        n_jobs=10,
-        return_details=False,
-        print_summary=True,
-    ):
-        """Measure only staleness introduced by forward filling.
-
-        Ages are calculated from the timestamps of actual bid/ask-side
-        observations captured before filling. A same-price trade resets the
-        corresponding side age to zero. The midpoint age is the older of its
-        bid-side and ask-side inputs.
-        """
-        if isinstance(aggs, str):
-            aggs = [aggs]
-        else:
-            aggs = list(aggs)
-        if not aggs:
-            raise ValueError("aggs must contain at least one aggregation.")
-        if stale_after_ms is not None and stale_after_ms < 0:
-            raise ValueError("stale_after_ms must be non-negative.")
-        if max_fill_gap_ms is not None and max_fill_gap_ms < 0:
-            raise ValueError("max_fill_gap_ms must be non-negative.")
-
-        data = TradeData(self.ticker, self.source, self.cm_um)
-        data.grab_trades_data(
-            pd.Timestamp(end).to_pydatetime(),
-            self._days_to_pull(start, end),
-            n_jobs=n_jobs,
-        )
-
-        summaries = []
-        details = {}
-        for agg in aggs:
-            prices, fill_detail = data.agg_to_intervals(
-                agg,
-                start=start,
-                end=end,
-                fill_gaps=fill_gaps,
-                max_fill_gap_ms=max_fill_gap_ms,
-                drop_both_stale=False,
-                stale_after_ms=None,
-                return_fill_diagnostics=True,
-            )
-
-            if fill_detail.empty:
-                summary = pd.DataFrame([{
-                    "diagnostic_basis": STALENESS_DIAGNOSTIC_BASIS,
-                    "n_rows": 0,
-                }])
-                detail = fill_detail
-            else:
-                summary, detail = check_price_staleness(
-                    fill_detail,
-                    stale_after_ms=stale_after_ms,
-                    return_details=True,
-                    print_summary=False,
-                )
-
-            summary.insert(0, "latency", agg)
-            summary.insert(1, "start", pd.Timestamp(start))
-            summary.insert(2, "end", pd.Timestamp(end))
-            summary.insert(3, "fill_gaps", bool(fill_gaps))
-            summary.insert(4, "max_fill_gap_ms", max_fill_gap_ms)
-            summaries.append(summary)
-            details[agg] = detail
-
-        summary_table = pd.concat(summaries, ignore_index=True, sort=False)
-        if print_summary:
-            with pd.option_context(
-                "display.max_columns", None,
-                "display.width", 260,
-            ):
-                print(summary_table.to_string(index=False))
-
-        if return_details:
-            return summary_table, details
-        return summary_table
-
-
-    @staticmethod
-    def _summarize_staleness_details(
-        details: pd.DataFrame,
-        stale_after_ms=None,
-    ) -> pd.DataFrame:
-        """Summarize precomputed observation ages after overlap removal."""
-        if details.empty:
-            return pd.DataFrame([{
-                "diagnostic_basis": STALENESS_DIAGNOSTIC_BASIS,
-                "n_rows": 0,
-            }])
-        return check_price_staleness(
-            details,
-            stale_after_ms=stale_after_ms,
-            return_details=False,
-            print_summary=False,
-        )
-
-    @staticmethod
-    def _combine_staleness_windows(window_summary: pd.DataFrame) -> pd.DataFrame:
-        """Combine disjoint fill-age windows using exact row-weighted shares."""
-        if window_summary.empty:
-            return pd.DataFrame()
-
-        share_cols = [
-            "spot_forward_filled_share",
-            "perp_forward_filled_share",
-            "either_forward_filled_share",
-            "both_forward_filled_share",
-            "one_sided_forward_filled_share",
-            "spot_fill_stale_share",
-            "perp_fill_stale_share",
-            "either_fill_stale_share",
-            "both_fill_stale_share",
-            "one_sided_fill_stale_share",
-            # Separate price-change diagnostics.
-            "spot_change_share",
-            "perp_change_share",
-            "either_change_share",
-            "neither_change_share",
-            # Backward-compatible fill-age alias.
-            "both_stale_share",
-        ]
-        rows = []
-        for latency, group in window_summary.groupby("latency", sort=False):
-            group = group.copy()
-            weights = pd.to_numeric(group["n_rows"], errors="coerce").fillna(0.0)
-            total_rows = float(weights.sum())
-            row = {
-                "diagnostic_basis": STALENESS_DIAGNOSTIC_BASIS,
-                "latency": latency,
-                "start": pd.to_datetime(group["window_start"]).min(),
-                "end": pd.to_datetime(group["window_end"]).max(),
-                "n_windows": int(len(group)),
-                "n_rows": int(total_rows),
-            }
-            for col in share_cols:
-                if col not in group.columns:
-                    row[col] = np.nan
-                    continue
-                values = pd.to_numeric(group[col], errors="coerce")
-                valid = values.notna() & (weights > 0)
-                row[col] = (
-                    float(np.average(values[valid], weights=weights[valid]))
-                    if valid.any()
-                    else np.nan
-                )
-
-            for col in [
-                "spot_fill_age_max_ms",
-                "perp_fill_age_max_ms",
-                "longest_both_fill_stale_run_rows",
-                "longest_both_fill_stale_run_ms",
-                "spot_age_max_ms",
-                "perp_age_max_ms",
-            ]:
-                if col in group.columns:
-                    row[col] = pd.to_numeric(group[col], errors="coerce").max()
-
-            rows.append(row)
-
-        return pd.DataFrame(rows)
-
-    def check_staleness_multiperiod(
-        self,
-        start,
-        end,
-        aggs,
-        period=30,
-        stale_after_ms=None,
-        *,
-        fill_gaps=False,
-        max_fill_gap_ms=None,
-        boundary_lookback="1H",
-        n_jobs=10,
-        save_csv=False,
-        folder_name="staleness_diagnostics",
-        prefix="staleness",
-        resume=True,
-        max_full_grid_rows=20_000_000,
-        return_overall=False,
-        print_summary=True,
-    ):
-        """Run staleness diagnostics over successive memory-bounded windows.
-
-        The public call mirrors :meth:`get_data_multiperiod`: ``period`` is the
-        number of days downloaded and processed at once. Only summary rows are
-        retained in memory; aggregated row-level diagnostics are discarded
-        after each window.
-
-        A short overlap is pulled before every window after the first. This
-        lets actual-observation fill ages carry into the reported window
-        rather than resetting at the chunk boundary. Overlap rows
-        are removed before the summary is stored, so windows remain disjoint
-        and their row-weighted shares can be combined exactly.
-
-        Notes
-        -----
-        With ``fill_gaps=True``, 10 days at 10 ms would create roughly 86.4
-        million grid rows for one latency. ``max_full_grid_rows`` guards against
-        accidentally constructing a grid that is too large. Use a shorter
-        ``period`` (often one day or less) for full-grid diagnostics.
-
-        Returns
-        -------
-        pd.DataFrame or tuple[pd.DataFrame, pd.DataFrame]
-            One row per latency and diagnostic window. If ``return_overall`` is
-            True, also return a compact row-weighted summary per latency.
-        """
-        if period <= 0:
-            raise ValueError("period must be a positive number of days.")
-        if isinstance(aggs, str):
-            aggs = [aggs]
-        else:
-            aggs = list(aggs)
-        if not aggs:
-            raise ValueError("aggs must contain at least one aggregation.")
-
-        start = pd.Timestamp(start).to_pydatetime()
-        end = pd.Timestamp(end).to_pydatetime()
-        if end <= start:
-            raise ValueError("end must be later than start.")
-        if stale_after_ms is not None and stale_after_ms < 0:
-            raise ValueError("stale_after_ms must be non-negative.")
-        if max_fill_gap_ms is not None and max_fill_gap_ms < 0:
-            raise ValueError("max_fill_gap_ms must be non-negative.")
-
-        lookback = pd.Timedelta(boundary_lookback)
-        if lookback < pd.Timedelta(0):
-            raise ValueError("boundary_lookback must be non-negative.")
-        min_lookback = max(
-            [pd.Timedelta(agg) for agg in aggs]
-            + [pd.Timedelta(milliseconds=float(stale_after_ms or 0.0))]
-        )
-        lookback = max(lookback, min_lookback)
-
-        output_path = None
-        existing = pd.DataFrame()
-        completed = set()
-        if save_csv:
-            output_folder = Path(folder_name)
-            output_folder.mkdir(parents=True, exist_ok=True)
-            grid_tag = "fullgrid" if fill_gaps else "observedbins"
-            stale_tag = (
-                "all"
-                if stale_after_ms is None
-                else f"{self._cache_value(stale_after_ms)}ms"
-            )
-            fill_tag = (
-                "nofilllimit"
-                if max_fill_gap_ms is None
-                else f"fill{self._cache_value(max_fill_gap_ms)}ms"
-            )
-            lookback_tag = f"lookback{int(lookback.total_seconds() * 1000)}ms"
-            identity = re.sub(
-                r"[^A-Za-z0-9_-]+",
-                "-",
-                f"{self.ticker}_{self.source}_{self.cm_um}",
-            )
-            output_path = output_folder / (
-                f"{prefix}_ffagev4_{identity}_{grid_tag}_{fill_tag}_{stale_tag}_"
-                f"{lookback_tag}_{period}d_"
-                f"{pd.Timestamp(start):%Y%m%d}_{pd.Timestamp(end):%Y%m%d}.csv"
-            )
-            if resume and output_path.exists():
-                existing = pd.read_csv(output_path)
-                for col in ["window_start", "window_end", "diagnostic_start"]:
-                    if col in existing:
-                        existing[col] = pd.to_datetime(existing[col], errors="coerce")
-                completed = {
-                    (
-                        pd.Timestamp(row.window_start),
-                        pd.Timestamp(row.window_end),
-                        str(row.latency),
-                    )
-                    for row in existing.itertuples()
-                    if pd.notna(row.window_start) and pd.notna(row.window_end)
-                }
-
-        summaries = []
-        if not existing.empty:
-            summaries.append(existing)
-
-        curr_start = start
-        window_number = 0
-        total_windows = int(np.ceil(
-            (pd.Timestamp(end) - pd.Timestamp(start)).total_seconds()
-            / (period * 86400.0)
-        ))
-        while curr_start < end:
-            window_number += 1
-            curr_end = min(end, curr_start + datetime.timedelta(days=period))
-            missing_aggs = [
-                agg for agg in aggs
-                if (
-                    pd.Timestamp(curr_start),
-                    pd.Timestamp(curr_end),
-                    str(agg),
-                ) not in completed
-            ]
-
-            if not missing_aggs:
-                if print_summary:
-                    print(
-                        f"Staleness window {window_number}: "
-                        f"{curr_start} to {curr_end} already complete."
-                    )
-                curr_start = curr_end
-                continue
-
-            diagnostic_start = max(
-                start,
-                (pd.Timestamp(curr_start) - lookback).to_pydatetime(),
-            )
-
-            if fill_gaps and max_full_grid_rows is not None:
-                duration = pd.Timestamp(curr_end) - pd.Timestamp(diagnostic_start)
-                for agg in missing_aggs:
-                    expected_rows = int(np.ceil(duration / pd.Timedelta(agg)))
-                    if expected_rows > int(max_full_grid_rows):
-                        raise MemoryError(
-                            f"The {diagnostic_start} to {curr_end} full grid at "
-                            f"{agg} would contain about {expected_rows:,} rows, "
-                            f"above max_full_grid_rows={max_full_grid_rows:,}. "
-                            "Reduce period, set fill_gaps=False, or explicitly "
-                            "raise max_full_grid_rows."
-                        )
-
-            if print_summary:
-                print(
-                    f"Staleness window {window_number}/{max(total_windows, window_number)}: "
-                    f"{curr_start} to {curr_end} ({missing_aggs})"
-                )
-
-            _, details_by_agg = self.check_staleness(
-                start=diagnostic_start,
-                end=curr_end,
-                aggs=missing_aggs,
-                stale_after_ms=stale_after_ms,
-                fill_gaps=fill_gaps,
-                max_fill_gap_ms=max_fill_gap_ms,
-                n_jobs=n_jobs,
-                return_details=True,
-                print_summary=False,
-            )
-
-            new_rows = []
-            for agg in missing_aggs:
-                details = details_by_agg[agg]
-                details = details.loc[
-                    (details.index >= pd.Timestamp(curr_start))
-                    & (details.index < pd.Timestamp(curr_end))
-                ]
-                summary = self._summarize_staleness_details(
-                    details,
-                    stale_after_ms=stale_after_ms,
-                )
-                summary.insert(0, "latency", agg)
-                summary.insert(1, "window_start", pd.Timestamp(curr_start))
-                summary.insert(2, "window_end", pd.Timestamp(curr_end))
-                summary.insert(3, "diagnostic_start", pd.Timestamp(diagnostic_start))
-                summary.insert(4, "period_days", period)
-                summary.insert(5, "fill_gaps", bool(fill_gaps))
-                summary.insert(6, "max_fill_gap_ms", max_fill_gap_ms)
-                new_rows.append(summary)
-
-            new_summary = pd.concat(new_rows, ignore_index=True, sort=False)
-            summaries.append(new_summary)
-
-            if save_csv and output_path is not None:
-                current = pd.concat(summaries, ignore_index=True, sort=False)
-                current = current.drop_duplicates(
-                    subset=["window_start", "window_end", "latency"],
-                    keep="last",
-                ).sort_values(["window_start", "latency"])
-                current.to_csv(output_path, index=False)
-                # Keep only the deduplicated table to avoid accumulating copies
-                # when saving after every window.
-                summaries = [current]
-
-            del details_by_agg
-            curr_start = curr_end
-
-        window_summary = (
-            pd.concat(summaries, ignore_index=True, sort=False)
-            if summaries
-            else pd.DataFrame()
-        )
-        if not window_summary.empty:
-            window_summary = window_summary.drop_duplicates(
-                subset=["window_start", "window_end", "latency"],
-                keep="last",
-            )
-            window_summary = window_summary[
-                window_summary["latency"].isin(aggs)
-                & (pd.to_datetime(window_summary["window_start"]) >= pd.Timestamp(start))
-                & (pd.to_datetime(window_summary["window_end"]) <= pd.Timestamp(end))
-            ].sort_values(["window_start", "latency"]).reset_index(drop=True)
-
-        overall = self._combine_staleness_windows(window_summary)
-        if print_summary and not overall.empty:
-            print("\nRow-weighted summary across all completed windows:")
-            with pd.option_context(
-                "display.max_columns", None,
-                "display.width", 220,
-            ):
-                print(overall.to_string(index=False))
-            if output_path is not None:
-                print(f"Window diagnostics saved to: {output_path}")
-
-        if return_overall:
-            return window_summary, overall
-        return window_summary
-
     # @timeout(480)
-    def _get_and_parse_data(
-        self,
-        start,
-        end,
-        aggs,
-        interval,
-        lag_structure=None,
-        lag_is=None,
-        save_csv=True,
-        folder_name='vecm_hasbrouck2_um',
-        prefix='hasbrouck2',
-        fill_gaps=False,
-        max_fill_gap_ms=None,
-        drop_both_stale=False,
-        stale_after_ms=None,
-        n_jobs=10,
-    ):
-        """Pull, aggregate, and fit the VECM for each requested latency.
-
-        The staleness options are exposed here so calls to
-        :meth:`get_data_multiperiod` can pass them through unchanged.
-
-        ``drop_both_stale=True, stale_after_ms=None`` removes every row where
-        neither midpoint changes. Supplying a threshold removes a row only once
-        both midpoint prices have been unchanged longer than that many
-        milliseconds. Filtering creates irregular event-time spacing, so use it
-        mainly as a robustness specification.
-        """
-        if isinstance(aggs, str):
-            aggs = [aggs]
-        else:
-            aggs = list(aggs)
-        if not aggs:
-            raise ValueError("aggs must contain at least one aggregation.")
-        if lag_structure is None:
-            lag_is = [] if lag_is is None else list(lag_is)
-            if not lag_is:
-                raise ValueError(
-                    "Provide at least one value in lag_is when lag_structure is None."
-                )
-        if stale_after_ms is not None and stale_after_ms < 0:
-            raise ValueError("stale_after_ms must be non-negative.")
-        if max_fill_gap_ms is not None and max_fill_gap_ms < 0:
-            raise ValueError("max_fill_gap_ms must be non-negative.")
-        if stale_after_ms is not None and not drop_both_stale:
-            print(
-                "Note: stale_after_ms is used only when "
-                "drop_both_stale=True; no rows will be filtered."
-            )
-
-        cache_prefix = self._cache_prefix(
-            prefix,
-            fill_gaps=fill_gaps,
-            max_fill_gap_ms=max_fill_gap_ms,
-            drop_both_stale=drop_both_stale,
-            stale_after_ms=stale_after_ms,
-        )
-
-        output_folder = Path(folder_name)
-        if save_csv:
-            output_folder.mkdir(parents=True, exist_ok=True)
-
-        data = None
+    def _get_and_parse_data(self, start, end, aggs, interval, lag_structure=None, lag_is=[], save_csv=True, folder_name='vecm_hasbrouck2_um', prefix='hasbrouck2'):
+        data_called = False
         shares_dict = {}
         summary_dict = {}
-
-        def get_aggregated_prices(agg):
-            nonlocal data
-            if data is None:
-                data = TradeData(self.ticker, self.source, self.cm_um)
-                data.grab_trades_data(
-                    pd.Timestamp(end).to_pydatetime(),
-                    self._days_to_pull(start, end),
-                    n_jobs=n_jobs,
-                )
-
-            prices = data.agg_to_intervals(
-                agg,
-                start=start,
-                end=end,
-                fill_gaps=fill_gaps,
-                max_fill_gap_ms=max_fill_gap_ms,
-                drop_both_stale=drop_both_stale,
-                stale_after_ms=stale_after_ms,
-            )
-            if prices.empty:
-                raise ValueError(
-                    f"No aligned spot/perpetual observations remain for {agg} "
-                    f"between {start} and {end}."
-                )
-            required = {"log_midpoint_spot", "log_midpoint_perp"}
-            missing = required.difference(prices.columns)
-            if missing:
-                raise KeyError(
-                    f"Aggregated data is missing required columns: {sorted(missing)}"
-                )
-            return prices
-
         for agg in aggs:
-            bidask_diff = None
-
+            data_agg = False
             if lag_structure is None:
-                lag_configs = [
-                    (
-                        i,
-                        generate_multiple_lags(
-                            i,
-                            ['10ms', '50ms', '100ms', '200ms', '500ms', '1s'],
-                            '10s',
-                        ),
-                    )
-                    for i in lag_is
-                ]
+                for i in lag_is:
+                    try:
+                        shares_df = pd.read_csv(f'{folder_name}/{prefix}_{interval.lower()}_{agg.lower()}_{i}_{self.cm_um}_results_{datetime.datetime.strftime(start, '%Y%m%d')}_{datetime.datetime.strftime(end, '%Y%m%d')}.csv', index_col=0)
+                        summary_df = pd.read_csv(f'{folder_name}/{prefix}_{interval.lower()}_{agg.lower()}_{i}_{self.cm_um}_summary_{datetime.datetime.strftime(start, '%Y%m%d')}_{datetime.datetime.strftime(end, '%Y%m%d')}.csv', index_col=0)
+                        print('File found, reading from file...')
+                    
+                    except FileNotFoundError:
+                        if not data_called:
+                            data = TradeData(self.ticker, self.source, self.cm_um)
+                            data.grab_trades_data(end, (end-start).days)
+                            data_called = True
+                        if not data_agg:
+                            bidask_diff = data.agg_to_intervals(agg, fill_gaps=False)
+                            data_agg = True
+
+                        lag_structure2 = generate_multiple_lags(i, ['10ms', '50ms', '100ms', '200ms', '500ms', '1s'], '10s')
+                        model = SimpleMVAR(
+                            ticker = self.ticker,
+                            source = self.source,
+                            cm_um = self.cm_um,
+                            prices=bidask_diff[["log_midpoint_spot", "log_midpoint_perp"]],
+                            lag_structure=lag_structure2,
+                            latency=agg,
+                            interval=interval,
+                            intercept=True,
+                            ecm=True,
+                            reference_col="log_midpoint_spot",
+                        )
+                        try:
+                            results = model.fit_by_interval(n_ahead_irf=200, parallel=True)
+                            shares_df = model.shares_table(results)
+                            summary_df = model.all_interval_summaries(results)
+
+                            if save_csv:
+                                shares_df.to_csv(f'{folder_name}/{prefix}_{interval.lower()}_{agg.lower()}_{i}_{self.cm_um}_results_{datetime.datetime.strftime(start, '%Y%m%d')}_{datetime.datetime.strftime(end, '%Y%m%d')}.csv')
+                                summary_df.to_csv(f'{folder_name}/{prefix}_{interval.lower()}_{agg.lower()}_{i}_{self.cm_um}_summary_{datetime.datetime.strftime(start, '%Y%m%d')}_{datetime.datetime.strftime(end, '%Y%m%d')}.csv')
+                        except:
+                            shares_df = pd.DataFrame()
+                            summary_df = pd.DataFrame()
+                            print("error")
+
+                    shares_dict[(agg, i)] = shares_df
+                    summary_dict[(agg, i)] = summary_df
+
             else:
-                if agg not in lag_structure:
-                    raise ValueError(
-                        f"latency '{agg}' is not present in lag_structure."
-                    )
-                lag_configs = [("custom", lag_structure)]
-
-            for lag_key, selected_lag_structure in lag_configs:
-                file_stem = (
-                    f"{cache_prefix}_{interval.lower()}_{agg.lower()}_"
-                    f"{lag_key}_{self.cm_um}"
-                )
-                result_path = output_folder / (
-                    f"{file_stem}_results_{pd.Timestamp(start):%Y%m%d}_"
-                    f"{pd.Timestamp(end):%Y%m%d}.csv"
-                )
-                summary_path = output_folder / (
-                    f"{file_stem}_summary_{pd.Timestamp(start):%Y%m%d}_"
-                    f"{pd.Timestamp(end):%Y%m%d}.csv"
-                )
-
                 try:
-                    shares_df = pd.read_csv(result_path, index_col=0)
-                    summary_df = pd.read_csv(summary_path, index_col=0)
-                    print(f"File found, reading from file: {result_path.name}")
+                    shares_df = pd.read_csv(f'{folder_name}/{prefix}_results_{datetime.datetime.strftime(start, '%Y%m%d')}_{datetime.datetime.strftime(end, '%Y%m%d')}.csv', index_col=0)
+                    summary_df = pd.read_csv(f'{folder_name}/{prefix}_summary_{datetime.datetime.strftime(start, '%Y%m%d')}_{datetime.datetime.strftime(end, '%Y%m%d')}.csv', index_col=0)
+                    print('File found, reading from file...')
+                
                 except FileNotFoundError:
-                    if bidask_diff is None:
-                        bidask_diff = get_aggregated_prices(agg)
-
                     model = SimpleMVAR(
-                        ticker=self.ticker,
-                        source=self.source,
-                        cm_um=self.cm_um,
-                        prices=bidask_diff[
-                            ["log_midpoint_spot", "log_midpoint_perp"]
-                        ],
-                        lag_structure=selected_lag_structure,
+                        ticker = self.ticker,
+                        source = self.source,
+                        cm_um = self.cm_um,
+                        prices=bidask_diff[["log_midpoint_spot", "log_midpoint_perp"]],
+                        lag_structure=lag_structure,
                         latency=agg,
                         interval=interval,
                         intercept=True,
                         ecm=True,
                         reference_col="log_midpoint_spot",
                     )
-
                     try:
-                        results = model.fit_by_interval(
-                            n_ahead_irf=200,
-                            parallel=True,
-                        )
+                        results = model.fit_by_interval(n_ahead_irf=200, parallel=True)
                         shares_df = model.shares_table(results)
                         summary_df = model.all_interval_summaries(results)
 
                         if save_csv:
-                            shares_df.to_csv(result_path)
-                            summary_df.to_csv(summary_path)
-                    except Exception as exc:
+                            shares_df.to_csv(f'{folder_name}/{prefix}_results_{datetime.datetime.strftime(start, '%Y%m%d')}_{datetime.datetime.strftime(end, '%Y%m%d')}.csv')
+                            summary_df.to_csv(f'{folder_name}/{prefix}_summary_{datetime.datetime.strftime(start, '%Y%m%d')}_{datetime.datetime.strftime(end, '%Y%m%d')}.csv')
+                    except:
                         shares_df = pd.DataFrame()
                         summary_df = pd.DataFrame()
-                        print(
-                            f"Error fitting {agg}, lag={lag_key}, "
-                            f"{start} to {end}: {exc}"
-                        )
+                        print("error")
 
-                result_key = (agg, 0 if lag_structure is not None else lag_key)
-                shares_dict[result_key] = shares_df
-                summary_dict[result_key] = summary_df
+                shares_dict[(agg, 0)] = shares_df
+                summary_dict[(agg, 0)] = summary_df
 
         return shares_dict, summary_dict
-
+    
     def get_data_multiperiod(self, start, end, aggs, interval, period, **kwargs):
-        """Fit successive non-overlapping windows covering the full range.
-
-        ``kwargs`` are passed directly to :meth:`_get_and_parse_data`, including
-        ``drop_both_stale``, ``stale_after_ms``, ``max_fill_gap_ms``, and
-        ``fill_gaps``.
-        """
-        if period <= 0:
-            raise ValueError("period must be a positive number of days.")
-        start = pd.Timestamp(start).to_pydatetime()
-        end = pd.Timestamp(end).to_pydatetime()
-        if end <= start:
-            raise ValueError("end must be later than start.")
-
+        '''
+        period: how frequently data is sampled, in days
+        '''
+        curr_start = end - datetime.timedelta(days=period)
+        curr_end = end
         results_dict = {}
         summary_dict = {}
-        curr_end = end
-
-        # Work backwards as before, but use max(start, ...) so the oldest
-        # partial period is not silently omitted.
-        while curr_end > start:
-            curr_start = max(start, curr_end - datetime.timedelta(days=period))
-            results_i, summary_i = self._get_and_parse_data(
-                curr_start,
-                curr_end,
-                aggs,
-                interval,
-                **kwargs,
-            )
-
-            for key, value in results_i.items():
-                results_dict.setdefault(key, []).append(value)
-                summary_dict.setdefault(key, []).append(summary_i[key])
-
-            curr_end = curr_start
+        while curr_start >= start:
+            results_i, summary_i = self._get_and_parse_data(curr_start, curr_end, aggs, interval, **kwargs)
+            for key in results_i.keys():
+                if key not in results_dict.keys():
+                    results_dict[key] = [results_i[key]]
+                    summary_dict[key] = [summary_i[key]]
+                else:
+                    results_dict[key].append(results_i[key])
+                    summary_dict[key].append(summary_i[key])
+            
+            curr_end = curr_end - datetime.timedelta(days=period)
+            curr_start = curr_end - datetime.timedelta(days=period)
             print(results_dict.keys())
 
-        for key in results_dict:
-            nonempty_results = [df for df in results_dict[key] if not df.empty]
-            nonempty_summaries = [df for df in summary_dict[key] if not df.empty]
-            results_dict[key] = (
-                pd.concat(nonempty_results, ignore_index=False)
-                if nonempty_results
-                else pd.DataFrame()
-            )
-            summary_dict[key] = (
-                pd.concat(nonempty_summaries, ignore_index=False)
-                if nonempty_summaries
-                else pd.DataFrame()
-            )
+        if curr_start < start and curr_end == end:
+            results_i, summary_i = self._get_and_parse_data(start, curr_end, aggs, interval, **kwargs)
+            for key in results_i.keys():
+                if key not in results_dict.keys():
+                    results_dict[key] = [results_i[key]]
+                    summary_dict[key] = [summary_i[key]]
+                else:
+                    results_dict[key].append(results_i[key])
+                    summary_dict[key].append(summary_i[key])
+
+        for key in results_dict.keys():
+            results_dict[key] = pd.concat(results_dict[key])
+            summary_dict[key] = pd.concat(summary_dict[key])
 
         return results_dict, summary_dict
 

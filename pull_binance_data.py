@@ -775,4 +775,6 @@ def find_first_diff(df, log=True):
             df_copy['dlog_'+col] = df_copy['log_'+col].diff()
         else:
             df_copy['d_'+col] = df_copy[col].diff()
+    # Convert to float32 for memory efficiency
+    df_copy = df_copy.astype(np.float32)
     return df_copy

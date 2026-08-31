@@ -14,7 +14,6 @@ import zipfile
 import io
 import polars as pl
 import pandas as pd
-import numpy as np
 import re
 import pickle
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,219 +24,6 @@ import time
 from pull_binance_data import *
     
 from typing import Dict, Tuple, Optional, List
-
-
-STALENESS_DIAGNOSTIC_BASIS = "actual_observation_fill_age_v4"
-LAST_TRADE_DIAGNOSTIC_BASIS = "actual_last_trade_observation_fill_age_v1"
-
-
-def check_price_staleness(
-    fill_details: pd.DataFrame,
-    stale_after_ms: Optional[float] = None,
-    *,
-    return_details: bool = False,
-    print_summary: bool = True,
-):
-    """Summarize age created by forward-filling actual observations.
-
-    Unlike the earlier diagnostic, this function does *not* infer staleness
-    from whether a numerical price changed. It expects observation-age columns
-    produced by ``TradeData.agg_to_intervals(...,
-    return_fill_diagnostics=True)``. A same-price trade therefore resets the
-    relevant side's age to zero.
-
-    Parameters
-    ----------
-    fill_details : pd.DataFrame
-        Row-level output from ``agg_to_intervals`` containing
-        ``spot_fill_age_ms`` and ``perp_fill_age_ms``. Each midpoint age is the
-        older (maximum) age of the bid-side and ask-side inputs used to build
-        that midpoint.
-    stale_after_ms : float, optional
-        An observation is stale when its fill age is greater than this value.
-        If omitted, any positive fill age is treated as forward-filled/stale.
-    return_details : bool, default False
-        Return ``(summary, row_details)``.
-    print_summary : bool, default True
-        Print the one-row summary table.
-    """
-    if not isinstance(fill_details, pd.DataFrame):
-        raise TypeError("fill_details must be a pandas DataFrame.")
-    if not isinstance(fill_details.index, pd.DatetimeIndex):
-        raise TypeError("fill_details must have a DatetimeIndex.")
-    if stale_after_ms is not None and stale_after_ms < 0:
-        raise ValueError("stale_after_ms must be non-negative.")
-
-    required = {"spot_fill_age_ms", "perp_fill_age_ms"}
-    missing = required.difference(fill_details.columns)
-    if missing:
-        raise KeyError(
-            "Fill diagnostics are missing required observation-age columns: "
-            f"{sorted(missing)}. Obtain the frame with "
-            "TradeData.agg_to_intervals(..., return_fill_diagnostics=True)."
-        )
-
-    frame = fill_details.copy().sort_index()
-    if frame.index.has_duplicates:
-        raise ValueError("fill_details.index contains duplicate timestamps.")
-
-    # Rows without both midpoint ages cannot support a two-price comparison.
-    frame = frame.dropna(subset=["spot_fill_age_ms", "perp_fill_age_ms"])
-    if frame.empty:
-        summary = pd.DataFrame([{
-            "diagnostic_basis": STALENESS_DIAGNOSTIC_BASIS,
-            "n_rows": 0,
-            "stale_after_ms": (
-                np.nan if stale_after_ms is None else float(stale_after_ms)
-            ),
-        }])
-        if print_summary:
-            print(summary.to_string(index=False))
-        return (summary, frame) if return_details else summary
-
-    spot_age = pd.to_numeric(frame["spot_fill_age_ms"], errors="coerce")
-    perp_age = pd.to_numeric(frame["perp_fill_age_ms"], errors="coerce")
-
-    spot_ff = spot_age > 0.0
-    perp_ff = perp_age > 0.0
-    either_ff = spot_ff | perp_ff
-    both_ff = spot_ff & perp_ff
-    one_sided_ff = spot_ff ^ perp_ff
-
-    threshold = 0.0 if stale_after_ms is None else float(stale_after_ms)
-    spot_stale = spot_age > threshold
-    perp_stale = perp_age > threshold
-    either_stale = spot_stale | perp_stale
-    both_stale = spot_stale & perp_stale
-    one_sided_stale = spot_stale ^ perp_stale
-
-    frame["diagnostic_basis"] = STALENESS_DIAGNOSTIC_BASIS
-    frame["spot_forward_filled"] = spot_ff
-    frame["perp_forward_filled"] = perp_ff
-    frame["either_forward_filled"] = either_ff
-    frame["both_forward_filled"] = both_ff
-    frame["one_sided_forward_filled"] = one_sided_ff
-    frame["spot_fill_stale"] = spot_stale
-    frame["perp_fill_stale"] = perp_stale
-    frame["either_fill_stale"] = either_stale
-    frame["both_fill_stale"] = both_stale
-    frame["one_sided_fill_stale"] = one_sided_stale
-    # Backward-compatible row-level alias, now explicitly fill-age based.
-    frame["both_stale"] = both_stale
-
-    # Price-change metrics are retained as a separate diagnostic only. They do
-    # not determine any of the fill-age stale flags above.
-    if {"midpoint_spot", "midpoint_perp"}.issubset(frame.columns):
-        spot_changed = frame["midpoint_spot"].ne(frame["midpoint_spot"].shift())
-        perp_changed = frame["midpoint_perp"].ne(frame["midpoint_perp"].shift())
-        spot_changed.iloc[0] = True
-        perp_changed.iloc[0] = True
-        frame["spot_changed"] = spot_changed
-        frame["perp_changed"] = perp_changed
-        frame["either_changed"] = spot_changed | perp_changed
-        frame["neither_changed"] = ~(spot_changed | perp_changed)
-    else:
-        frame["spot_changed"] = False
-        frame["perp_changed"] = False
-        frame["either_changed"] = False
-        frame["neither_changed"] = False
-
-    try:
-        times_ns = frame.index.as_unit("ns").asi8
-    except AttributeError:
-        times_ns = frame.index.asi8
-    if len(frame) > 1:
-        spacing_ms = np.diff(times_ns).astype(np.float64) / 1_000_000.0
-        median_spacing_ms = float(np.median(spacing_ms))
-    else:
-        median_spacing_ms = np.nan
-
-    def q(values: pd.Series, quantile: float) -> float:
-        arr = pd.to_numeric(values, errors="coerce").to_numpy(dtype=np.float64)
-        return float(np.nanquantile(arr, quantile)) if len(arr) else np.nan
-
-    def longest_true_run(mask: pd.Series) -> tuple[int, float]:
-        arr = np.asarray(mask, dtype=bool)
-        if not arr.any():
-            return 0, 0.0
-        edges = np.diff(np.r_[False, arr, False].astype(np.int8))
-        starts = np.flatnonzero(edges == 1)
-        ends = np.flatnonzero(edges == -1)
-        lengths = ends - starts
-        winner = int(np.argmax(lengths))
-        start_i = int(starts[winner])
-        end_i = int(ends[winner])
-        elapsed_ms = float(times_ns[end_i - 1] - times_ns[start_i]) / 1_000_000.0
-        if not np.isnan(median_spacing_ms):
-            elapsed_ms += median_spacing_ms
-        return int(lengths[winner]), elapsed_ms
-
-    longest_rows, longest_ms = longest_true_run(both_stale)
-
-    spot_p50 = q(spot_age, 0.50)
-    spot_p90 = q(spot_age, 0.90)
-    spot_p95 = q(spot_age, 0.95)
-    spot_p99 = q(spot_age, 0.99)
-    perp_p50 = q(perp_age, 0.50)
-    perp_p90 = q(perp_age, 0.90)
-    perp_p95 = q(perp_age, 0.95)
-    perp_p99 = q(perp_age, 0.99)
-    spot_max = float(spot_age.max())
-    perp_max = float(perp_age.max())
-
-    summary = pd.DataFrame([{
-        "diagnostic_basis": STALENESS_DIAGNOSTIC_BASIS,
-        "n_rows": int(len(frame)),
-        "median_spacing_ms": median_spacing_ms,
-        "spot_forward_filled_share": float(spot_ff.mean()),
-        "perp_forward_filled_share": float(perp_ff.mean()),
-        "either_forward_filled_share": float(either_ff.mean()),
-        "both_forward_filled_share": float(both_ff.mean()),
-        "one_sided_forward_filled_share": float(one_sided_ff.mean()),
-        "spot_fill_age_p50_ms": spot_p50,
-        "spot_fill_age_p90_ms": spot_p90,
-        "spot_fill_age_p95_ms": spot_p95,
-        "spot_fill_age_p99_ms": spot_p99,
-        "spot_fill_age_max_ms": spot_max,
-        "perp_fill_age_p50_ms": perp_p50,
-        "perp_fill_age_p90_ms": perp_p90,
-        "perp_fill_age_p95_ms": perp_p95,
-        "perp_fill_age_p99_ms": perp_p99,
-        "perp_fill_age_max_ms": perp_max,
-        "stale_after_ms": (
-            np.nan if stale_after_ms is None else float(stale_after_ms)
-        ),
-        "spot_fill_stale_share": float(spot_stale.mean()),
-        "perp_fill_stale_share": float(perp_stale.mean()),
-        "either_fill_stale_share": float(either_stale.mean()),
-        "both_fill_stale_share": float(both_stale.mean()),
-        "one_sided_fill_stale_share": float(one_sided_stale.mean()),
-        "longest_both_fill_stale_run_rows": longest_rows,
-        "longest_both_fill_stale_run_ms": longest_ms,
-        # Separate price-change diagnostics (not used to define staleness).
-        "spot_change_share": float(frame["spot_changed"].mean()),
-        "perp_change_share": float(frame["perp_changed"].mean()),
-        "either_change_share": float(frame["either_changed"].mean()),
-        "neither_change_share": float(frame["neither_changed"].mean()),
-        # Backward-compatible aliases. These now refer to fill age.
-        "spot_age_p50_ms": spot_p50,
-        "spot_age_p90_ms": spot_p90,
-        "spot_age_p95_ms": spot_p95,
-        "spot_age_p99_ms": spot_p99,
-        "spot_age_max_ms": spot_max,
-        "perp_age_p50_ms": perp_p50,
-        "perp_age_p90_ms": perp_p90,
-        "perp_age_p95_ms": perp_p95,
-        "perp_age_p99_ms": perp_p99,
-        "perp_age_max_ms": perp_max,
-        "both_stale_share": float(both_stale.mean()),
-    }])
-
-    if print_summary:
-        with pd.option_context("display.max_columns", None, "display.width", 240):
-            print(summary.to_string(index=False))
-
-    return (summary, frame) if return_details else summary
 
 class TradeData:
     def __init__(self, symbol, source, cm_um='um'):
@@ -352,26 +138,10 @@ class TradeData:
                                     .alias('timestamp')
                                 ])
                             
-                            # Preserve exchange ordering when collapsing trades
-                            # to the millisecond timestamp retained by this
-                            # pipeline. This makes "last trade" deterministic
-                            # and avoids arbitrary parallel group ordering.
+                            # Efficient aggregation
                             df = df.with_columns(pl.col('timestamp').dt.truncate('1ms'))
-                            if 'id' in df.columns:
-                                df = (
-                                    df.sort(['timestamp', 'is_bid', 'id'], maintain_order=True)
-                                    .group_by(['timestamp', 'is_bid'], maintain_order=True)
-                                    .agg(
-                                        pl.col('price').last(),
-                                        pl.col('id').last().alias('trade_id'),
-                                    )
-                                )
-                                return df.select(['price', 'is_bid', 'timestamp', 'trade_id'])
-                            df = (
-                                df.sort(['timestamp', 'is_bid', 'price'], maintain_order=True)
-                                .group_by(['timestamp', 'is_bid'], maintain_order=True)
-                                .agg(pl.col('price').last())
-                            )
+                            df = df.unique(subset=['timestamp', 'is_bid']).group_by(['timestamp', 'is_bid']).agg(pl.col('price').last())
+                            
                             return df.select(['price', 'is_bid', 'timestamp'])
                             
         except Exception as e:
@@ -487,84 +257,6 @@ class TradeData:
 
         return df_filled
     
-
-    def to_intervals_last_trade(self, df, freq='1s', fill_gaps=False):
-        """Aggregate trades to the last retained transaction price per bin.
-
-        This differs from :meth:`to_intervals_bidask`: trade direction is
-        ignored, so each bin requires only one observed trade rather than one
-        buyer-maker and one seller-maker trade.
-
-        Parameters
-        ----------
-        df : polars.DataFrame
-            Trade data containing ``timestamp`` and ``price``.
-        freq : str, default '1s'
-            Polars duration string such as ``'10ms'``, ``'100ms'``, or ``'1s'``.
-        fill_gaps : bool, default False
-            If True, construct a complete regular grid and forward-fill the
-            last-trade price. If False, return only bins containing a trade.
-
-        Returns
-        -------
-        polars.DataFrame
-            Columns ``timestamp_bin`` and ``last_trade_price``.
-
-        Notes
-        -----
-        The downloader currently retains at most one price per millisecond and
-        trade side. If both sides have retained observations at the same exact
-        millisecond, their original exchange ordering is no longer available;
-        the last retained row is used as the tie-breaker.
-        """
-        required = {"timestamp", "price"}
-        missing = required.difference(df.columns)
-        if missing:
-            raise KeyError(
-                f"Trade data is missing required columns: {sorted(missing)}"
-            )
-
-        if df.height == 0:
-            return pl.DataFrame({
-                "timestamp_bin": pl.Series([], dtype=pl.Datetime("us")),
-                "last_trade_price": pl.Series([], dtype=pl.Float64),
-            })
-
-        order_cols = ["timestamp"]
-        if "trade_id" in df.columns:
-            order_cols.append("trade_id")
-        else:
-            order_cols.extend([col for col in ("price", "is_bid") if col in df.columns])
-        df_agg = (
-            df
-            .with_columns(pl.col("timestamp").cast(pl.Datetime))
-            .sort(order_cols, maintain_order=True)
-            .with_columns(
-                pl.col("timestamp").dt.truncate(freq).alias("timestamp_bin")
-            )
-            .group_by("timestamp_bin", maintain_order=True)
-            .agg(pl.col("price").last().alias("last_trade_price"))
-            .sort("timestamp_bin")
-        )
-
-        if not fill_gaps:
-            return df_agg
-
-        full_range = pl.DataFrame({
-            "timestamp_bin": pl.datetime_range(
-                start=df_agg["timestamp_bin"].min(),
-                end=df_agg["timestamp_bin"].max(),
-                interval=freq,
-                eager=True,
-            )
-        })
-
-        return (
-            full_range
-            .join(df_agg, on="timestamp_bin", how="left")
-            .with_columns(pl.col("last_trade_price").forward_fill())
-        )
-
     def grab_trades_data(self, end_date, days=30, n_jobs=10):
         df_trades_spots = self.get_all_data_optimized(end_date=end_date, days=days, kind='spot', n_jobs=n_jobs)
         df_trades_perps = self.get_all_data_optimized(end_date=end_date, days=days, kind='perp', n_jobs=n_jobs)
@@ -572,59 +264,31 @@ class TradeData:
         self.df_trades_perps = df_trades_perps
         return
 
-    def agg_to_intervals(
-        self,
-        freq='1s',
-        start=None,
-        end=None,
-        fill_gaps=False,
-        max_fill_gap_ms: Optional[int] = None,
-        drop_both_stale: bool = False,
-        stale_after_ms: Optional[float] = None,
-        return_fill_diagnostics: bool = False,
-    ):
-        """Aggregate trades to bid/ask midpoints at ``freq``.
-
-        Observation timestamps are recorded for every bid/ask side before any
-        forward fill. Consequently, fill age resets when a new observation
-        arrives even if its numerical price is unchanged.
+    def agg_to_intervals(self, freq='1s', start=None, end=None, fill_gaps=False, max_fill_gap_ms: Optional[int] = None):
+        """
+        Aggregate trades to bid/ask midpoints at `freq`, optionally for only [start, end).
 
         Parameters
         ----------
         freq : str
-            Aggregation frequency (``'10ms'``, ``'100ms'``, ``'1s'``, etc.).
-        start, end : datetime-like, optional
-            Time range to aggregate, interpreted as ``[start, end)``.
+            Aggregation frequency ('1s', '500ms', etc.)
+        start/end 
+            Time range to aggregate (pandas Timestamp / datetime / string / None)
         fill_gaps : bool, default False
-            Build a complete regular grid before forward-filling. When False,
-            retain only the union of bins observed in spot or perpetual data.
-        max_fill_gap_ms : int, optional
-            Do not use an individual bid/ask input after it has been carried
-            farther than this age. ``None`` imposes no age limit.
-        drop_both_stale : bool, default False
-            Remove rows where both market midpoints exceed
-            ``stale_after_ms``. If no threshold is supplied, remove rows where
-            both midpoint constructions use at least one forward-filled side.
-        stale_after_ms : float, optional
-            Fill-age threshold for ``drop_both_stale``.
-        return_fill_diagnostics : bool, default False
-            Return ``(model_frame, fill_details)``. ``fill_details`` measures
-            time since actual side observations, not time since price changes.
-
+            Whether to fill missing intervals. Set to False for 2-5x speedup.
+            
         Returns
         -------
-        pd.DataFrame or tuple[pd.DataFrame, pd.DataFrame]
-            Model input frame, optionally accompanied by row-level fill ages.
+        pd.DataFrame
+            Aggregated midpoint prices with log differences, as float32
         """
+        # --- parse times ---
         if start is not None:
             start = pd.Timestamp(start).to_pydatetime()
         if end is not None:
             end = pd.Timestamp(end).to_pydatetime()
-        if max_fill_gap_ms is not None and max_fill_gap_ms < 0:
-            raise ValueError("max_fill_gap_ms must be non-negative.")
-        if stale_after_ms is not None and stale_after_ms < 0:
-            raise ValueError("stale_after_ms must be non-negative.")
 
+        # --- filter raw trades early (Polars) ---
         spots = self.df_trades_spots
         perps = self.df_trades_perps
 
@@ -635,396 +299,84 @@ class TradeData:
             spots = spots.filter(pl.col("timestamp") < pl.lit(end))
             perps = perps.filter(pl.col("timestamp") < pl.lit(end))
 
+        # if empty, return empty df early
         if spots.height == 0 or perps.height == 0:
-            empty = pd.DataFrame()
-            return (empty, empty.copy()) if return_fill_diagnostics else empty
+            return pd.DataFrame()
 
-        spots_bidask = self.to_intervals_bidask(spots, freq, fill_gaps=False)
-        perps_bidask = self.to_intervals_bidask(perps, freq, fill_gaps=False)
+        # --- aggregate to bid/ask intervals (stay in Polars for speed) ---
+        spots_bidask = self.to_intervals_bidask(spots, freq, fill_gaps=fill_gaps)
+        perps_bidask = self.to_intervals_bidask(perps, freq, fill_gaps=fill_gaps)
 
+        # Outer-join observed bins, then forward-fill each side. To avoid
+        # carrying values across long gaps we optionally limit fills by
+        # `max_fill_gap_ms` (milliseconds). If None, default to half the bin.
+        # This keeps forward-fill semantics but is much cheaper than building
+        # a full continuous timeline.
+        # --- outer join ---
         joined = (
             spots_bidask
             .join(perps_bidask, on="timestamp_bin", how="outer", suffix="_perp")
-            .with_columns(
-                pl.coalesce(["timestamp_bin", "timestamp_bin_perp"])
-                .alias("timestamp_bin")
-            )
-            .drop("timestamp_bin_perp")
             .sort("timestamp_bin")
             .with_columns(pl.col("timestamp_bin").alias("timestamp"))
         )
 
-        if fill_gaps:
-            full_range = pl.DataFrame({
-                "timestamp_bin": pl.datetime_range(
-                    start=joined["timestamp_bin"].min(),
-                    end=joined["timestamp_bin"].max(),
-                    interval=freq,
-                    eager=True,
-                )
-            })
-            joined = (
-                full_range
-                .join(joined.drop("timestamp"), on="timestamp_bin", how="left")
-                .with_columns(pl.col("timestamp_bin").alias("timestamp"))
-            )
-
-        value_cols = [
-            "bid_price",
-            "ask_price",
-            "bid_price_perp",
-            "ask_price_perp",
-        ]
-        side_labels = {
-            "bid_price": "spot_bid",
-            "ask_price": "spot_ask",
-            "bid_price_perp": "perp_bid",
-            "ask_price_perp": "perp_ask",
-        }
-
-        joined = joined.with_columns(
-            pl.col("timestamp")
-            .cast(pl.Datetime("ns"))
-            .cast(pl.Int64)
-            .alias("_timestamp_ns")
-        )
-
-        last_time_cols = {}
-        for col in value_cols:
-            last_col = f"_last_{col}_ns"
-            last_time_cols[col] = last_col
-            joined = joined.with_columns(
-                pl.when(pl.col(col).is_not_null())
-                .then(pl.col("_timestamp_ns"))
-                .otherwise(pl.lit(None, dtype=pl.Int64))
-                .forward_fill()
-                .alias(last_col)
-            )
-
-        filled = joined.with_columns([
-            pl.col(col).forward_fill().alias(col) for col in value_cols
+        # Save null masks (to later undo fills that cross the max gap)
+        joined = joined.with_columns([
+            pl.col("bid_price").is_null().alias("_orig_null_bid_price"),
+            pl.col("ask_price").is_null().alias("_orig_null_ask_price"),
+            pl.col("bid_price_perp").is_null().alias("_orig_null_bid_price_perp"),
+            pl.col("ask_price_perp").is_null().alias("_orig_null_ask_price_perp"),
         ])
 
-        # Compute side ages before enforcing a fill limit. A same-price trade is
-        # non-null in the original bin and therefore resets this age to zero.
-        for col in value_cols:
-            age_col = f"_{side_labels[col]}_fill_age_ms"
-            last_col = last_time_cols[col]
-            filled = filled.with_columns(
-                pl.when(pl.col(last_col).is_not_null())
-                .then(
-                    (pl.col("_timestamp_ns") - pl.col(last_col))
-                    .cast(pl.Float64) / 1_000_000.0
-                )
-                .otherwise(pl.lit(None, dtype=pl.Float64))
-                .alias(age_col)
-            )
+        # Forward-fill globally
+        filled = joined.fill_null(strategy="forward")
 
-        if max_fill_gap_ms is not None:
-            threshold_ns = int(float(max_fill_gap_ms) * 1_000_000)
-            for col in value_cols:
-                last_col = last_time_cols[col]
-                filled = filled.with_columns(
-                    pl.when(
-                        pl.col(last_col).is_null()
-                        | ((pl.col("_timestamp_ns") - pl.col(last_col)) > threshold_ns)
-                    )
-                    .then(pl.lit(None))
-                    .otherwise(pl.col(col))
-                    .alias(col)
-                )
-
-        filled = filled.with_columns([
-            ((pl.col("ask_price") + pl.col("bid_price")) / 2)
-            .alias("midpoint_spot"),
-            ((pl.col("ask_price_perp") + pl.col("bid_price_perp")) / 2)
-            .alias("midpoint_perp"),
-            pl.max_horizontal([
-                pl.col("_spot_bid_fill_age_ms"),
-                pl.col("_spot_ask_fill_age_ms"),
-            ]).alias("spot_fill_age_ms"),
-            pl.max_horizontal([
-                pl.col("_perp_bid_fill_age_ms"),
-                pl.col("_perp_ask_fill_age_ms"),
-            ]).alias("perp_fill_age_ms"),
-        ])
-
-        diagnostic_columns = [
-            "timestamp",
-            "midpoint_spot",
-            "midpoint_perp",
-            "spot_fill_age_ms",
-            "perp_fill_age_ms",
-            "_spot_bid_fill_age_ms",
-            "_spot_ask_fill_age_ms",
-            "_perp_bid_fill_age_ms",
-            "_perp_ask_fill_age_ms",
-        ]
-        bidask_meta = (
-            filled
-            .select(diagnostic_columns)
-            .to_pandas()
-            .set_index("timestamp")
-            .dropna(subset=[
-                "midpoint_spot",
-                "midpoint_perp",
-                "spot_fill_age_ms",
-                "perp_fill_age_ms",
-            ])
-            .rename(columns={
-                "_spot_bid_fill_age_ms": "spot_bid_fill_age_ms",
-                "_spot_ask_fill_age_ms": "spot_ask_fill_age_ms",
-                "_perp_bid_fill_age_ms": "perp_bid_fill_age_ms",
-                "_perp_ask_fill_age_ms": "perp_ask_fill_age_ms",
-            })
-        )
-
-        if bidask_meta.empty:
-            empty = pd.DataFrame()
-            return (empty, bidask_meta) if return_fill_diagnostics else empty
-
-        threshold = 0.0 if stale_after_ms is None else float(stale_after_ms)
-        both_fill_stale = (
-            (bidask_meta["spot_fill_age_ms"] > threshold)
-            & (bidask_meta["perp_fill_age_ms"] > threshold)
-        )
-        if drop_both_stale:
-            bidask_meta = bidask_meta.loc[~both_fill_stale]
-
-        bidask = bidask_meta[["midpoint_spot", "midpoint_perp"]]
-        bidask_diff = find_first_diff(bidask).dropna().astype(np.float32)
-
-        if not return_fill_diagnostics:
-            return bidask_diff
-
-        # Align diagnostics exactly to rows surviving the model-frame transform.
-        fill_details = bidask_meta.loc[
-            bidask_meta.index.intersection(bidask_diff.index)
-        ].copy()
-        fill_details = fill_details.reindex(bidask_diff.index)
-        fill_details["diagnostic_basis"] = STALENESS_DIAGNOSTIC_BASIS
-        return bidask_diff, fill_details
-
-
-
-    def agg_last_trade_to_intervals(
-        self,
-        freq='1s',
-        start=None,
-        end=None,
-        fill_gaps=False,
-        max_fill_gap_ms: Optional[int] = None,
-        return_fill_diagnostics: bool = False,
-        rename_for_vecm: bool = False,
-        retain_initial_grid_row: bool = False,
-    ):
-        """Aggregate spot and perpetual trades using last-trade prices.
-
-        The last observed transaction price in each bin is used for each
-        market. Missing market observations are forward-filled only after the
-        spot and perpetual observed bins have been aligned.
-
-        Parameters
-        ----------
-        freq : str
-            Aggregation frequency such as ``'10ms'``, ``'50ms'``, or ``'1s'``.
-        start, end : datetime-like, optional
-            Half-open time range ``[start, end)``.
-        fill_gaps : bool, default False
-            If True, construct every calendar-time bin. If False, retain only
-            the union of bins observed in either market.
-        max_fill_gap_ms : int, optional
-            Maximum age of a last-trade value that may be carried forward.
-            ``None`` imposes no cutoff.
-        return_fill_diagnostics : bool, default False
-            If True, return ``(model_frame, fill_details)``. Fill ages measure
-            time since an actual trade observation, including same-price trades.
-        rename_for_vecm : bool, default False
-            If True, rename the output columns to the legacy midpoint names
-            expected by the current VECM code. This changes names only; the
-            values remain last-trade prices.
-        retain_initial_grid_row : bool, default False
-            When returning fill diagnostics, retain the first valid price-grid
-            row even though its log difference is undefined. This is useful
-            for methods that consume price levels on a complete regular grid.
-
-        Returns
-        -------
-        pandas.DataFrame or tuple[pandas.DataFrame, pandas.DataFrame]
-            Price/log-difference frame, optionally with row-level fill ages.
-        """
-        if start is not None:
-            start = pd.Timestamp(start).to_pydatetime()
-        if end is not None:
-            end = pd.Timestamp(end).to_pydatetime()
-        if max_fill_gap_ms is not None and max_fill_gap_ms < 0:
-            raise ValueError("max_fill_gap_ms must be non-negative.")
-
-        spots = self.df_trades_spots
-        perps = self.df_trades_perps
-
-        if start is not None:
-            spots = spots.filter(pl.col("timestamp") >= pl.lit(start))
-            perps = perps.filter(pl.col("timestamp") >= pl.lit(start))
-        if end is not None:
-            spots = spots.filter(pl.col("timestamp") < pl.lit(end))
-            perps = perps.filter(pl.col("timestamp") < pl.lit(end))
-
-        if spots.height == 0 or perps.height == 0:
-            empty = pd.DataFrame()
-            return (empty, empty.copy()) if return_fill_diagnostics else empty
-
-        spots_last = self.to_intervals_last_trade(
-            spots,
-            freq=freq,
-            fill_gaps=False,
-        ).rename({"last_trade_price": "last_trade_spot"})
-
-        perps_last = self.to_intervals_last_trade(
-            perps,
-            freq=freq,
-            fill_gaps=False,
-        ).rename({"last_trade_price": "last_trade_perp"})
-
-        joined = (
-            spots_last
-            .join(perps_last, on="timestamp_bin", how="outer", suffix="_perp")
-            .with_columns(
-                pl.coalesce(["timestamp_bin", "timestamp_bin_perp"])
-                .alias("timestamp_bin")
-            )
-            .drop("timestamp_bin_perp")
-            .sort("timestamp_bin")
-            .with_columns(pl.col("timestamp_bin").alias("timestamp"))
-        )
-
-        if fill_gaps:
-            full_range = pl.DataFrame({
-                "timestamp_bin": pl.datetime_range(
-                    start=joined["timestamp_bin"].min(),
-                    end=joined["timestamp_bin"].max(),
-                    interval=freq,
-                    eager=True,
-                )
-            })
-            joined = (
-                full_range
-                .join(joined.drop("timestamp"), on="timestamp_bin", how="left")
-                .with_columns(pl.col("timestamp_bin").alias("timestamp"))
-            )
-
-        value_cols = ["last_trade_spot", "last_trade_perp"]
-        age_cols = {
-            "last_trade_spot": "spot_fill_age_ms",
-            "last_trade_perp": "perp_fill_age_ms",
-        }
-
-        joined = joined.with_columns(
-            pl.col("timestamp")
-            .cast(pl.Datetime("ns"))
-            .cast(pl.Int64)
-            .alias("_timestamp_ns")
-        )
-
-        last_time_cols = {}
-        for col in value_cols:
-            last_col = f"_last_{col}_ns"
-            last_time_cols[col] = last_col
-            joined = joined.with_columns(
-                pl.when(pl.col(col).is_not_null())
-                .then(pl.col("_timestamp_ns"))
-                .otherwise(pl.lit(None, dtype=pl.Int64))
-                .forward_fill()
-                .alias(last_col)
-            )
-
-        filled = joined.with_columns([
-            pl.col(col).forward_fill().alias(col) for col in value_cols
-        ])
-
-        for col in value_cols:
-            last_col = last_time_cols[col]
-            filled = filled.with_columns(
-                pl.when(pl.col(last_col).is_not_null())
-                .then(
-                    (pl.col("_timestamp_ns") - pl.col(last_col))
-                    .cast(pl.Float64) / 1_000_000.0
-                )
-                .otherwise(pl.lit(None, dtype=pl.Float64))
-                .alias(age_cols[col])
-            )
-
-        if max_fill_gap_ms is not None:
-            threshold_ns = int(float(max_fill_gap_ms) * 1_000_000)
-            for col in value_cols:
-                last_col = last_time_cols[col]
-                filled = filled.with_columns(
-                    pl.when(
-                        pl.col(last_col).is_null()
-                        | (
-                            (pl.col("_timestamp_ns") - pl.col(last_col))
-                            > threshold_ns
-                        )
-                    )
-                    .then(pl.lit(None))
-                    .otherwise(pl.col(col))
-                    .alias(col)
-                )
-
-        last_trade_meta = (
-            filled
-            .select([
-                "timestamp",
-                "last_trade_spot",
-                "last_trade_perp",
-                "spot_fill_age_ms",
-                "perp_fill_age_ms",
-            ])
-            .to_pandas()
-            .set_index("timestamp")
-            .dropna(subset=[
-                "last_trade_spot",
-                "last_trade_perp",
-                "spot_fill_age_ms",
-                "perp_fill_age_ms",
-            ])
-        )
-
-        if last_trade_meta.empty:
-            empty = pd.DataFrame()
-            return (empty, last_trade_meta) if return_fill_diagnostics else empty
-
-        prices = last_trade_meta[["last_trade_spot", "last_trade_perp"]]
-        model_frame = find_first_diff(prices).dropna().astype(np.float32)
-
-        if rename_for_vecm:
-            rename_map = {
-                "last_trade_spot": "midpoint_spot",
-                "last_trade_perp": "midpoint_perp",
-                "log_last_trade_spot": "log_midpoint_spot",
-                "log_last_trade_perp": "log_midpoint_perp",
-            }
-            model_frame = model_frame.rename(
-                columns={
-                    old: new
-                    for old, new in rename_map.items()
-                    if old in model_frame.columns
-                }
-            )
-
-        if not return_fill_diagnostics:
-            return model_frame
-
-        if retain_initial_grid_row:
-            fill_details = last_trade_meta.copy()
+        # Determine fill cutoff in nanoseconds
+        if max_fill_gap_ms is None:
+            try:
+                td = pd.Timedelta(freq)
+                threshold_ns = int(td.value // 2)
+            except Exception:
+                threshold_ns = None
         else:
-            fill_details = last_trade_meta.loc[
-                last_trade_meta.index.intersection(model_frame.index)
-            ].copy()
-            fill_details = fill_details.reindex(model_frame.index)
-        fill_details["diagnostic_basis"] = LAST_TRADE_DIAGNOSTIC_BASIS
-        return model_frame, fill_details
+            threshold_ns = int(max_fill_gap_ms) * 1_000_000
 
+        if threshold_ns is not None:
+            # compute time delta between consecutive observed rows (ns)
+            filled = filled.with_columns((pl.col("timestamp").cast(pl.Int64) - pl.col("timestamp").shift(1).cast(pl.Int64)).alias("_dt_ns"))
+            # first row will have null delta; mark as not exceeding
+            filled = filled.with_columns(pl.col("_dt_ns").fill_null(0))
+            filled = filled.with_columns((pl.col("_dt_ns") > threshold_ns).alias("_gap_exceeds"))
+
+            # If a value was originally null and the forward-fill crossed a large gap,
+            # revert that filled value back to null so we don't carry stale prices.
+            for col in ["bid_price", "ask_price", "bid_price_perp", "ask_price_perp"]:
+                orig_flag = f"_orig_null_{col}"
+                filled = filled.with_columns(
+                    pl.when(pl.col(orig_flag) & pl.col("_gap_exceeds")).then(pl.lit(None)).otherwise(pl.col(col)).alias(col)
+                )
+
+            # drop helper cols
+            filled = filled.drop(["_dt_ns", "_gap_exceeds", "_orig_null_bid_price", "_orig_null_ask_price", "_orig_null_bid_price_perp", "_orig_null_ask_price_perp"])
+        else:
+            filled = filled.drop(["_orig_null_bid_price", "_orig_null_ask_price", "_orig_null_bid_price_perp", "_orig_null_ask_price_perp"])
+
+        # compute midpoints and convert to pandas for downstream processing
+        bidask = (
+            filled
+            .with_columns([
+                ((pl.col("ask_price") + pl.col("bid_price")) / 2).alias("midpoint_spot"),
+                ((pl.col("ask_price_perp") + pl.col("bid_price_perp")) / 2).alias("midpoint_perp"),
+            ])
+            .select(["timestamp", "midpoint_spot", "midpoint_perp"]).to_pandas().set_index("timestamp")
+        )
+
+        bidask_diff = find_first_diff(bidask).dropna()
+        # Convert all numeric columns to float32 for memory efficiency
+        bidask_diff = bidask_diff.astype(np.float32)
+        return bidask_diff
+
+    
     def get_klines(self, start_date, end_date, kind='spot', interval='1h', columns=[], n_jobs=10):
         symbol = self.symbol
 

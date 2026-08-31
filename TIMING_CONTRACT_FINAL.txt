@@ -1,0 +1,33 @@
+FINAL COVARIATE TIMING CONTRACT
+===============================
+
+Existing KM event checkpoints are immutable inputs. No shock/KM rerun.
+
+Daily native-frequency covariates:
+- fundingRate_bps: event UTC date - 1 calendar day
+- volume: event UTC date - 1 calendar day
+- fear_greed: event UTC date - 1 calendar day
+
+Rolling/intraday covariates:
+- vol_spot_5min_pct: rolling 5-minute volatility sampled at event_tick - 1
+- vol_perp_5min_pct: rolling 5-minute volatility sampled at event_tick - 1
+- basis_level_bps: event_tick - 1
+- spread_spot_5min: latest completed 1-second-bin rolling observation strictly before start_ts
+- spread_perp_5min: latest completed 1-second-bin rolling observation strictly before start_ts
+- basis_5min: latest completed 1-second-bin rolling observation strictly before start_ts
+
+The underlying 1-second bid/ask bucket is labeled by its availability time
+(bucket start + 1 second), not by its start. Thus an event inside a second can
+never receive trades from later in that same second.
+
+Bid/ask trade-side prices are placed on a complete 1-second grid using
+previous-tick forward filling before the rolling means are calculated. These
+are transaction-side spread proxies, not exchange order-book quoted spreads.
+
+Binance futures metrics (intraday observations stored in daily ZIPs):
+- open_interest: latest create_time strictly before start_ts
+- trader_long_short: latest create_time strictly before start_ts
+- taker_long_short: latest create_time strictly before start_ts
+
+All timestamp as-of joins use direction='backward' and allow_exact_matches=False.
+No interpolation is used to construct the event-time price stream.

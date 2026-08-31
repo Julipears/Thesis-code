@@ -1,0 +1,155 @@
+Thesis-code AFT Pipeline Workflow
+=================================
+
+Overview
+--------
+This text documents the full month-by-month AFT data preparation, augmentation, and fitting workflow used in this repository. It lists inputs, dependencies, step-by-step commands, key files/functions, verification checks (including lookahead safeguards), and options to re-run parts of the pipeline.
+
+Requirements / dependencies
+- Python 3.9+ (matching your environment)
+- pandas, numpy, polars, pyarrow or fastparquet, lifelines, requests
+- Filesystem: parquet read/write support (pyarrow/fastparquet)
+
+Primary inputs
+- Raw trade data: spot & perp trade frames (used by `TradeData` in `trade_data_pull.py`).
+- Daily Binance metrics ZIPs (downloaded/parsed by augmentation notebooks).
+- Existing event files saved to `sa_<asset>_<cm/um>/aft_data/*.parquet`.
+
+High-level pipeline (ordered)
+1) Pull / prepare raw trade frames
+   - Source: `trade_data_pull.py` -> `TradeData`
+   - Typical call path: `MonthlyBasisSurvivalAnalysis.build_aft_data_month_by_month(...)` in `survival_analysis_basis_pipeline_v6.py` or via `survival_analysis_methods_eventstore_v6.ipynb`.
+
+2) Detect events / shocks
+   - Core: `survival_analysis.py::find_shocks2` (and callers `find_shocks` variants)
+   - Output: per-month event files stored under `sa_*/*/aft_data/*.parquet`.
+
+3) Compute covariates (5‑minute and daily prior-day)
+   - Core: `survival_analysis.py::find_covariates`
+   - 5‑minute features: compute rolling 5‑minute vol and spreads; extract values at `tick-1` (pre-shock).
+   - Resampled 5‑minute buckets merged via `pd.merge_asof(..., direction='backward')` to attach the most recent prior 5‑min bucket.
+   - Daily features: daily metrics are shifted by 1 day (`covariates.shift(1)`) before merging, ensuring prior-day usage.
+
+4) Month-by-month AFT data assembly
+   - `MonthlyBasisSurvivalAnalysis.build_aft_data_month_by_month` writes monthly `aft_data/*.parquet` and a `manifest.csv`.
+
+5) Augment with external daily metrics (liquidity / top-trader ratios)
+   - Notebook: `pull_missing_liquidity_all_markets_all_months.ipynb` contains `augment_one_event_file`, `process_market`, and `prepare_aft_data`.
+   - Uses `pull_or_load_market_metrics` and `pd.merge_asof(..., direction='backward')` to attach the latest daily metric at-or-before each event timestamp.
+   - If remote metrics are missing (NaNs), augmentation yields NaN covariates (these can cause `.dropna()` to remove months from fitting).
+
+6) Prepare final AFT datasets and drop incomplete rows
+   - `prepare_aft_data` loads augmented event files, applies filtering, and drops rows missing required covariates (this is why months with zero complete observations appear when upstream metrics are NaN).
+
+7) Fit AFT models per period / month
+   - Core: `survival_analysis_basis_eventstore_v6.py::fit_loglogistic_aft_by_period`, `fit_loglogistic_aft_month_by_month`, or fast routines in `aft_fast_from_events.py` / notebooks.
+   - Models: lifelines `LogLogisticAFTFitter`, `WeibullAFTFitter`, `LogNormalAFTFitter`.
+   - Diagnostics saved: `AIC_`, `log_likelihood_`, `concordance_index_`, and repository now includes BIC in the manifest (added in augmentation fit path).
+
+8) Save results
+   - Per-month coefficient CSVs, manifest files, and `aft_results_*` directories per market.
+
+Key files and where to re-run
+- Rebuild raw covariates (re-pull & recompute): run `MonthlyBasisSurvivalAnalysis.build_aft_data_month_by_month(...)` via `survival_analysis_methods_eventstore_v6.ipynb` or call it in a short script. This re-computes 5‑min covariates from raw trades.
+- Re-run augmentation only (attach daily metrics): re-run `process_market(...)` / `augment_one_event_file` in `pull_missing_liquidity_all_markets_all_months.ipynb` for the target market and month(s). This is faster but relies on remote metrics availability.
+- Re-fit AFTs: use `aft_fast_from_events.py` or the `fit_loglogistic_aft_month_by_month` wrapper in `survival_analysis_basis_pipeline_v6.py` / respective notebooks.
+
+Why months disappear (0 complete observations)
+- `prepare_aft_data` drops rows with NaNs in required covariates. If the augmentation step produced NaNs (e.g., `trader_long_short` from missing daily metrics), after `dropna()` a month can end up with 0 rows.
+
+Options when upstream metrics are missing
+- Re-run augmentation later if remote sources are fixed.
+- Implement imputation or backfill in the augmentation step before `dropna()` (impute by previous non-null day, median, or remove covariate from required set).
+- Recompute raw covariates and omit the external metric from the required covariates for the fit.
+
+Lookahead / leakage safeguards (what the code already does)
+- 5‑min covariates sampled at `tick-1` (pre-shock) — ensures shock tick isn't included.
+- `merge_asof(..., direction='backward')` attaches the most recent prior (or equal) covariate bucket.
+- Daily covariates are merged after `.shift(1)` so covariates reflect the previous day.
+
+Runtime assertions to detect accidental lookahead
+Add these checks immediately after merges in code/notebooks to fail-fast if any covariate timestamp is after the event `start_ts`:
+
+```
+# Example assertion to add in `survival_analysis.py` / augmentation notebook after merge_asof
+cov_ts_col = 'timestamp_5min'  # or the appropriate merged timestamp column
+if cov_ts_col in shocks_formatted.columns:
+    mask = shocks_formatted[cov_ts_col].notna() & (pd.to_datetime(shocks_formatted[cov_ts_col]) > pd.to_datetime(shocks_formatted['start_ts']))
+    assert not mask.any(), f"Lookahead detected: {mask.sum()} rows have covariate timestamp > start_ts"
+
+```
+
+Quick commands / examples
+- Rebuild covariates for a single market and month (python script example):
+
+```
+from survival_analysis_basis_pipeline_v6 import MonthlyBasisSurvivalAnalysis
+ms = MonthlyBasisSurvivalAnalysis(...)
+ms.build_aft_data_month_by_month(market='sa_btc_cm', start='20220101', end='20221231')
+```
+
+- Re-run augmentation for a single market (notebook cell / script):
+
+```
+from pull_missing_liquidity_all_markets_all_months import process_market
+process_market('sa_btc_cm', months=['2022-07'])
+```
+
+- Re-fit AFTs fast from existing event files:
+
+```
+python aft_fast_from_events.py --market sa_btc_cm --start 2022-01 --end 2022-12
+```
+
+Troubleshooting checklist
+- If a month has 0 rows after `prepare_aft_data`: inspect the augmented monthly parquet in `sa_<market>/aft_data/*.parquet` to see which covariates are NaN (open in pandas or polars).
+- Verify remote daily metric CSVs for that date (the augmentation function `fetch_one_metric_day` logs missing fields).
+- Confirm 5‑min covariates by opening the corresponding raw trade-derived 5‑min resampled file or recomputing via `find_covariates` for a sample day.
+
+Notes and recommended next steps
+- For reproducible re-runs, prefer re-running augmentation and fits first (faster) unless you suspect raw trade-derived covariates are incorrect, in which case re-run `build_aft_data_month_by_month`.
+- Add the runtime assertions above to `survival_analysis.py` and the augmentation notebook to detect any future accidental lookahead changes.
+- Consider adding an imputation option to `prepare_aft_data` so single-metric NaNs don't discard an entire month.
+
+End of workflow
+
+Run history (manifests scanned)
+--------------------------------
+I scanned market manifests and augmentation manifests under `sa_*` and recorded the presence/status below.
+
+- `sa_btc_cm/manifest.csv`: exists and lists complete `spot` and `perp` event files for 2021-01 through 2025-12.
+- `sa_btc_cm/aft_data/`: per-month `spot_YYYY-MM.parquet` and `perp_YYYY-MM.parquet` present.
+- `sa_btc_cm/aft_data_liquidity/liquidity_augmentation_manifest.csv`: exists; most rows show `skipped_existing` indicating augmentation outputs exist.
+
+- `sa_btc_um/manifest.csv` and `sa_btc_um/aft_manifest.csv`: both exist; `aft_manifest.csv` shows a `failed` entry for `2021-01` (spot) but `manifest.csv` lists many completed event files across periods.
+- `sa_btc_um/aft_data_liquidity/liquidity_augmentation_manifest.csv`: exists; rows marked `skipped_existing` for per-month outputs.
+
+- `sa_eth_cm/manifest.csv`: exists and lists `spot`/`perp` event files 2021-01 → 2025-11.
+- `sa_eth_cm/aft_data_liquidity/liquidity_augmentation_manifest.csv`: exists; rows marked `skipped_existing`.
+
+- `sa_eth_um/manifest.csv` and `sa_eth_um/aft_manifest.csv`: exist and list per-period event files through 2024/2025; `aft_manifest.csv` contains `period,first,status,error` rows for fast AFT runs.
+- `sa_eth_um/aft_data_liquidity/liquidity_augmentation_manifest.csv`: present (augmentation outputs available/marked existing).
+
+Notes:
+- `manifest.csv` files are the authoritative record of per-period event generation; `aft_data` contains the computed per-month AFT input parquet files.
+- `aft_data_liquidity/liquidity_augmentation_manifest.csv` shows augmentation status per input -> output file (many marked `skipped_existing` meaning augmentation has been performed previously and outputs exist in repo).
+- If you want, I can extract the exact timestamps (file mtimes) for the augmented/parquet files and produce a `run_history.csv` with (market, period, input_file, output_file, augmentation_status, event_rows) for import into analysis tools.
+
+Concrete list of files you likely ran
+-----------------------------------
+Below are the concrete files I believe you executed during your analysis and debugging. Run order is approximate (data prep -> augmentation -> fit):
+
+- `survival_analysis_methods_eventstore_v6.ipynb` — notebook driving `build_aft_data_month_by_month` and example runs.
+- `survival_analysis_basis_pipeline_v6.py` — month-by-month data build and fit wrappers (scriptable entrypoints).
+- `survival_analysis.py` — core detection and covariate functions (`find_shocks2`, `find_covariates`).
+- `trade_data_pull.py` — `TradeData` logic used when re-pulling raw trades for covariate generation.
+- `pull_binance_data.py` — helper scripts used to download or parse Binance daily metrics.
+- `pull_missing_liquidity_all_markets_all_months.ipynb` — augmentation notebook (`augment_one_event_file`, `prepare_aft_data`, `fit_one_month`).
+- `pull_only_missing_covariates_from_existing_events.ipynb` — alternate augmentation-only notebook.
+- `aft_fast_from_events.py` — fast AFT fitting pipeline operating on saved event files.
+- `Fast_AFT_From_Existing_Events.ipynb` — notebook wrapper for quick fits from existing events.
+- `survival_analysis_basis_eventstore_v6.py` — per-period AFT fit functions used by the pipeline.
+
+If you want, I can also:
+- insert these filenames (with timestamps) into the `manifest.csv` generation step so runs are tracked automatically, or
+- scan the `sa_*/aft_data` folders and manifests to produce an exact history of executed files and run times.
