@@ -12,8 +12,8 @@ import seaborn as sns
 
 
 CONFIGS = {
-    "btc_um": (Path("vecm_hasbrouck2_um"), "hasbrouck2", "um", "BTC linear"),
-    "btc_cm": (Path("vecm_hasbrouck2_cm"), "hasbrouck2", "cm", "BTC inverse"),
+    "btc_um": (Path("vecm_hasbrouck3_btc_um"), "hasbrouck3_btc_alignedv2", "um", "BTC linear"),
+    "btc_cm": (Path("vecm_hasbrouck3_btc_cm"), "hasbrouck3_btc_alignedv2", "cm", "BTC inverse"),
     "eth_um": (Path("vecm_hasbrouck3_eth_um"), "hasbrouck3_eth_alignedv2", "um", "ETH linear"),
     "eth_cm": (Path("vecm_hasbrouck3_eth_cm"), "hasbrouck3_eth_alignedv2", "cm", "ETH inverse"),
 }
