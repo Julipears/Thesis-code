@@ -29,24 +29,29 @@ pip install jupyter
 
 ## Usage
 
-The codebase is organized by thesis sections. Run the notebooks in order for the complete analysis pipeline.
+The active pipeline is split into three stages under `final_code/`. The
+superseded notebooks and one-off experiments are retained under `archive/`;
+see `PAPER_PIPELINE_MANIFEST.md` for the exact outputs and plots.
+Appendix generators are nested under the corresponding section's `appendix/`
+folder.
 
-### Section 6: VECM Analysis
-- **`hasbrouck_vecm.ipynb`**: Implements Hasbrouck's information share model using VECM to measure price discovery between spot and perpetual markets
-- **`standard_vecm.ipynb`**: Standard VECM analysis for testing market integration and cointegration relationships
+### Section 6: VECM analysis
+- **`final_code/vecm_hasbrouck3.py`**: Hasbrouck information-share implementation
+- **`final_code/section_4/run_hasbrouck3_full.py`**: BTC/ETH VECM batch runner
+- **`final_code/section_4/vecm_plotting.py`**: VECM alpha-over-time plots, separate alpha plots,
+  and regime heatmaps
 
-### Section 7: Survival Analysis
-- **`survival_analysis_methods.ipynb`**: Survival analysis of convergence times after market shocks, including Kaplan-Meier estimation and parametric models
+### Section 7: KM event identification and AFT analysis
+- **`final_code/section_5_1/`**: event identification and covariate construction
+- **`final_code/section_5_2/fit_aft_v8_without_spot_volatility.py`** and **`fit_aft_v8_univariate_models.py`**: current log-logistic AFT fits
+- **`final_code/section_5_2/`**: AFT figures, diagnostics, and tables
 
-### Backend Functions and Classes
-- **`trade_data_pull.py`**: Core data retrieval and processing classes (`TradeData`, `TradeDataMulti`, `BinanceMetricsData`) for downloading and processing trade data from Binance, KuCoin, and OKX
-- **`vecm_analysis2.py`**: Standard VECM implementation with cointegration testing and model diagnostics
-- **`vecm_hasbrouck2.py`**: Hasbrouck information share model implementation
-- **`survival_analysis.py`**: Survival analysis class with shock detection and convergence time estimation
-- **`pull_binance_data.py`**: Additional Binance data utilities
-- **`price_graphing.ipynb`**: Visualization utilities for price data
-- **`timeout.py`**: Timeout handling utilities
-- **`InProgress_non_parametric.ipynb`**: Work-in-progress non-parametric analysis
+See `PAPER_PIPELINE_MANIFEST.md` for the figure/table-to-script mapping.
+
+### Shared modules
+- **`final_code/trade_data_pull.py`**: data retrieval and processing classes
+- **`final_code/survival_analysis_data_processing_final.py`**, **`survival_analysis_data_pull_final.py`**, and **`survival_analysis_utils_final.py`**: KM/AFT data and utility functions
+- **`final_code/timeout.py`**: timeout handling utilities
 
 ## Key Classes and Functions
 

@@ -61,3 +61,6 @@ __pycache__/
 daily_perpetual_volume_figures/
 vecm_hasbrouck3_alpha_plots/
 tmp*/
+archive/
+daily_perpetual_volume_figures/
+tools/
