@@ -96,8 +96,7 @@ Saved KM events are immutable inputs. Covariates follow these rules:
 - No interpolation is used for event-time prices; previous-tick filling is
   used only to form the regular one-second bid/ask grid.
 
-`validate_base_covariate_timing` and `validate_augmented_timing` enforce these
-conditions. The current notebook run uses `SIGNIFICANCE = 0.01`.
+The current notebook run uses `SIGNIFICANCE = 0.01`.
 
 ## Data sources and dependencies
 
