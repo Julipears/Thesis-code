@@ -22,7 +22,7 @@ Price grid and Lee-Mykland
 - LM log prices are calculated in float64 from the retained last-trade prices.
 - Preceding-day data supplies the BPV lookback at the start of each target day.
 - n = 86,400 and the extreme-value threshold is recalculated for every UTC day.
-- Significance is 0.001, matching V5.
+- Significance is 0.01 (1%), matching the thesis specification.
 - A detected second is mapped to the final actual origin-market trade in that
   second.
 

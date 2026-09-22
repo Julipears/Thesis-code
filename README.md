@@ -1,92 +1,108 @@
-# Thesis-code
+# Thesis code
 
-This repository contains the codebase for an Engineering Science thesis analyzing cryptocurrency market dynamics using Vector Error Correction Models (VECM) and survival analysis techniques. The analysis focuses on price discovery, market efficiency, and convergence times in cryptocurrency spot and perpetual futures markets.
-
-## Overview
-
-The thesis examines how information flows between spot and perpetual futures markets in cryptocurrency exchanges, with particular emphasis on:
-- Price discovery mechanisms using Hasbrouck's information share model
-- Market integration through VECM analysis
-- Convergence time estimation after market shocks using survival analysis
+This repository contains the reproducible source for the thesis analysis of
+price discovery and convergence between cryptocurrency spot and perpetual
+markets.
 
 ## Installation
 
-1. Clone the repository:
-```bash
-git clone https://github.com/Julipears/Thesis-code.git
-cd Thesis-code
-```
-
-2. Install dependencies:
 ```bash
 pip install -r requirements.txt
-```
-
-3. For notebook execution, ensure Jupyter is installed:
-```bash
 pip install jupyter
 ```
 
-## Usage
+## Source layout
 
-The active pipeline is split into three stages under `final_code/`. The
-superseded notebooks and one-off experiments are retained under `archive/`;
-see `PAPER_PIPELINE_MANIFEST.md` for the exact outputs and plots.
-Appendix generators are nested under the corresponding section's `appendix/`
-folder.
+The active source is under `final_code/`. Shared modules are directly under
+that folder; section-specific code follows the paper structure.
 
-### Section 6: VECM analysis
-- **`final_code/vecm_hasbrouck3.py`**: Hasbrouck information-share implementation
-- **`final_code/section_4/run_hasbrouck3_full.py`**: BTC/ETH VECM batch runner
-- **`final_code/section_4/vecm_plotting.py`**: VECM alpha-over-time plots, separate alpha plots,
-  and regime heatmaps
+```text
+final_code/
+|-- section_4/                 # VECM and price-discovery analysis
+|   `-- appendix/              # Johansen and complete-grid robustness code
+|-- section_5_1/               # KM event identification and covariates
+`-- section_5_2/               # AFT models, figures, and tables
+    `-- appendix/              # diagnostics and appendix tables/figures
+```
 
-### Section 7: KM event identification and AFT analysis
-- **`final_code/section_5_1/`**: event identification and covariate construction
-- **`final_code/section_5_2/fit_aft_v8_without_spot_volatility.py`** and **`fit_aft_v8_univariate_models.py`**: current log-logistic AFT fits
-- **`final_code/section_5_2/`**: AFT figures, diagnostics, and tables
+## Running the pipeline
 
-See `PAPER_PIPELINE_MANIFEST.md` for the figure/table-to-script mapping.
+Run modules from the repository root with Python's module syntax so output
+paths continue to point to the existing result folders:
 
-### Shared modules
-- **`final_code/trade_data_pull.py`**: data retrieval and processing classes
-- **`final_code/survival_analysis_data_processing_final.py`**, **`survival_analysis_data_pull_final.py`**, and **`survival_analysis_utils_final.py`**: KM/AFT data and utility functions
-- **`final_code/timeout.py`**: timeout handling utilities
+```powershell
+# Section 4: VECM plots from saved results
+python -m final_code.section_4.vecm_plotting
 
-## Key Classes and Functions
+# Section 5.1: regenerate the December KM figures
+python -m final_code.section_5_1.regenerate_km_all_decembers
 
-### Data Retrieval
-- `TradeData`: Single symbol data retrieval from multiple exchanges
-- `TradeDataMulti`: Multi-symbol data retrieval with parallel processing
+# Section 5.2: reduced AFT diagnostics
+python -m final_code.section_5_2.appendix.plot_aft_v8_without_volatility_diagnostics
+```
 
-### Analysis
-- `VECMResults`: Standard VECM model fitting and diagnostics
-- `VECMHasbrouck2`: Hasbrouck information share implementation
-- `SurvivalAnalysis`: Shock detection and survival model fitting
+The production runners and fitting scripts are in the corresponding section
+folders. Appendix scripts are nested under `appendix/` beside the method they
+extend.
 
-## Dependencies
+## Paper code map
 
-- polars: High-performance DataFrame operations
-- pandas: Data manipulation and analysis
-- numpy: Numerical computing
-- requests: HTTP requests for data retrieval
-- matplotlib: Plotting and visualization
-- statsmodels: Statistical modeling (VECM, cointegration tests)
-- scikit-learn: Machine learning utilities
-- pytrends: Google Trends data (optional)
+### Section 4 — VECM
 
-## Data Sources
+- `final_code/vecm_hasbrouck3.py`: `VECMHasbrouck2` and `SimpleMVAR`, including
+  lag buckets, alpha/beta estimation, price-discovery shares, and ILS.
+- `final_code/section_4/run_hasbrouck3_full.py`: BTC/ETH linear and inverse
+  production runner.
+- `final_code/section_4/vecm_plotting.py`: alpha plots and regime heatmaps.
+- `final_code/section_4/appendix/`: Johansen diagnostics, complete-grid
+  robustness, and trade-activity analyses.
 
-- **Binance**: Spot and futures trade data, kline data, funding rates, metrics
-- **KuCoin**: Historical trade data
-- **OKX**: Trade data archives
-- **Deribit**: Implied volatility data
-- **The Block**: Cryptocurrency options data
+### Section 5.1 — KM events and covariates
 
-## License
+- `final_code/section_5_1/km_v8_events_and_covariates_single_pull.ipynb`:
+  production configuration and execution record.
+- `final_code/section_5_1/km_v8_regular_lm_pilot.py`: regular-grid event
+  detection, KM construction, covariate timing, and KM plotting functions.
+- `final_code/survival_analysis_data_processing_final.py`: event-time,
+  resolution, covariate, and timing-validation logic.
+- `final_code/survival_analysis_data_pull_final.py`: funding, kline, Fear &
+  Greed, and Binance futures-metric retrieval.
 
-See LICENSE file for details.
+### Section 5.2 — AFT models
 
-## Citation
+- `final_code/section_5_2/reconstruct_aft_v8_log_covariates.py`: constructs the
+  unit-matched, log-transformed AFT inputs from the V8 event set.
+- `final_code/section_5_2/fit_aft_v8_without_spot_volatility.py`: current
+  seven-variable log-logistic specification.
+- `final_code/section_5_2/fit_aft_v8_univariate_models.py`: null and univariate
+  models.
+- `final_code/section_5_2/plot_aft_v8_without_spot_volatility_results.py`:
+  coefficient heatmaps and concordance plots.
+- `final_code/section_5_2/appendix/`: VIF/correlation diagnostics,
+  open-interest and volume figures, and appendix coefficient tables.
 
-If you use this code in your research, please cite the corresponding thesis.
+The standalone V8 model containing spot volatility is archived at
+`archive/legacy_aft/v8_with_volatility/`.
+
+## Timing contract
+
+Saved KM events are immutable inputs. Covariates follow these rules:
+
+- Event-time volatility and instantaneous basis use event tick minus one.
+- Five-minute spread/basis observations satisfy
+  `covariate_5min_ts <= prev_ts < start_ts`.
+- Daily funding, volume, and Fear & Greed use the previous UTC calendar day.
+- Binance liquidity metrics satisfy `create_time < start_ts`.
+- No interpolation is used for event-time prices; previous-tick filling is
+  used only to form the regular one-second bid/ask grid.
+
+`validate_base_covariate_timing` and `validate_augmented_timing` enforce these
+conditions. The current notebook run uses `SIGNIFICANCE = 0.01`.
+
+## Data sources and dependencies
+
+The pipeline uses Binance spot/futures trades, klines, funding rates, and
+futures metrics. Core dependencies include pandas, NumPy, Polars, PyArrow,
+Matplotlib, Seaborn, Statsmodels, Lifelines, and Requests.
+
+See `LICENSE` for licensing information.

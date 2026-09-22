@@ -23,4 +23,4 @@ python -m final_code.section_5_2.plot_aft_v8_log_covariate_diagnostics
 ```
 
 The generated data and figures remain in the existing Git-ignored output
-folders described in `PAPER_PIPELINE_MANIFEST.md`.
+folders described in the repository `README.md`.
