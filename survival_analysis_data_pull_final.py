@@ -22,7 +22,7 @@ import requests
 
 
 SOURCE_METRIC_COLUMNS = {
-    "sum_open_interest_value": "open_interest",
+    "sum_open_interest": "open_interest",
     "sum_toptrader_long_short_ratio": "trader_long_short",
     "sum_taker_long_short_vol_ratio": "taker_long_short",
 }

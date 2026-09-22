@@ -41,3 +41,23 @@ __pycache__/
 
 .kernel-restart.err.log
 .kernel-restart.out.log
+
+# Generated market/event data and local caches (at any depth)
+**/events/
+**/aft_data/
+**/aft_data_*/
+**/metric_runs/
+**/metrics_cache/
+**/raw_metrics/
+**/data_cache/
+**/*.parquet
+**/*.parquet.*
+**/*.csv.gz
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+
+# Generated plot/result folders not covered by the pipeline-specific entries
+daily_perpetual_volume_figures/
+vecm_hasbrouck3_alpha_plots/
+tmp*/

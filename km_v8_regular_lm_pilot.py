@@ -438,7 +438,7 @@ def plot_yearly_btc_km(summary: pd.DataFrame, output_root: Path) -> None:
 def plot_asset_km_month_comparison(
     output_root: Path,
     asset: str = "btc",
-    months: tuple[str, ...] = ("2021-12", "2022-12", "2023-12", "2025-12"),
+    months: tuple[str, ...] = ("2021-12", "2022-12", "2023-12", "2024-12", "2025-12"),
     grid: str = "1s",
     horizon: float = 120.0,
     require_complete: bool = True,
@@ -468,7 +468,7 @@ def plot_asset_km_month_comparison(
     ]
     if missing_series and require_complete:
         raise ValueError(
-            f"Cannot build the requested four-column {asset.upper()} KM panel; missing "
+            f"Cannot build the requested {len(months)}-column {asset.upper()} KM panel; missing "
             f"month/market/direction series: {missing_series}"
         )
     complete_months = list(months)
@@ -533,7 +533,7 @@ def plot_asset_km_month_comparison(
 
 def plot_btc_km_month_comparison(
     output_root: Path,
-    months: tuple[str, ...] = ("2021-12", "2022-12", "2023-12", "2025-12"),
+    months: tuple[str, ...] = ("2021-12", "2022-12", "2023-12", "2024-12", "2025-12"),
     grid: str = "1s",
     horizon: float = 120.0,
     require_complete: bool = True,

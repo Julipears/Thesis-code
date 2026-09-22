@@ -13,7 +13,7 @@ from km_v8_regular_lm_pilot import plot_asset_km_month_comparison
 
 ROOT = Path("sa_results/km_v8_final_01")
 OUTPUT = ROOT / "analysis_outputs"
-MONTHS = ("2021-12", "2022-12", "2023-12", "2025-12")
+MONTHS = ("2021-12", "2022-12", "2023-12", "2024-12", "2025-12")
 MARKETS = ("btc_um", "btc_cm", "eth_um", "eth_cm")
 COVARIATES = (
     "basis_5min",
