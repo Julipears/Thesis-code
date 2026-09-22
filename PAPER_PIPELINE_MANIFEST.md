@@ -1,7 +1,6 @@
 # Paper reproduction manifest
 
-This is the live code set for the figures and tables in the thesis report. The
-remaining scripts are kept in `archive/` so the cleanup is reversible.
+This is the live code set for the figures and tables in the thesis report.
 
 All source paths below are relative to `final_code/`. Shared data and utility
 modules are directly under `final_code/`; section-specific code is grouped in
