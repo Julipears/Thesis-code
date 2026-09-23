@@ -1,0 +1,150 @@
+FINAL AFT WORKFLOW — REUSE EXISTING KM RESULTS
+=============================================
+
+Purpose
+-------
+This final workflow reuses the existing v6 event-level Kaplan–Meier episode checkpoints.
+It DOES NOT redetect shocks, recalculate basis-resolution outcomes, refit Kaplan–Meier
+models, or regenerate KM plots.
+
+Required existing KM input
+--------------------------
+Preferred v6 layout under each market checkpoint root:
+
+    event_store/spot/*.parquet
+    event_store/perp/*.parquet
+
+Those files contain the episode-level values needed by AFT:
+- start_ts
+- prev_ts
+- Status
+- Length
+- resolution_pct
+- shock_size or shock_size_bps
+- source_chunk_start / source_chunk_end (preferred)
+
+Fallback accepted layout:
+
+    events/spot_*.parquet
+    events/perp_*.parquet
+
+KM curve CSV files alone are NOT enough because they do not contain the individual
+shock timestamps needed to attach covariates.
+
+Read-only KM contract
+---------------------
+The final pipeline treats these saved fields as immutable:
+- start_ts
+- prev_ts
+- Status
+- Length
+- shock_size (when present)
+
+For each saved source chunk it reloads raw spot/perp trades, rebuilds the same irregular
+forward-filled event-time stream, reconstructs event_tick by exact start_ts lookup, and
+asserts that saved prev_ts is exactly tick-1. It then attaches covariates and asserts that
+Length/Status were not changed.
+
+No shock detector or KM fitter is called by run_market_pipeline_from_saved_km().
+
+Frozen covariate timing
+-----------------------
+- vol_spot_5min / vol_perp_5min / basis_level:
+  sampled at event_tick - 1 on the reconstructed original event-time stream.
+- spread_spot_5min / spread_perp_5min / basis_5min:
+  latest rolling 5-minute observation from a fully completed 1-second bucket,
+  strictly before start_ts. The stored covariate timestamp is the bucket END,
+  preventing later trades in the shock's own second from entering the covariate
+  (merge_asof direction='backward', allow_exact_matches=False).
+- fundingRate_bps / volume / fear_greed:
+  exact previous UTC calendar day.
+- open_interest / trader_long_short / taker_long_short:
+  these are INTRADAY observations stored inside Binance daily archive ZIPs;
+  they are NOT previous-day covariates. Use the latest create_time strictly
+  before start_ts (merge_asof direction='backward', allow_exact_matches=False).
+
+Timing principle: use the most recent information available strictly before the
+shock at each variable's native measurement frequency. Therefore daily variables
+use D-1, rolling 5-minute variables use only pre-shock observations, and Binance
+metrics use the latest intraday observation with create_time < start_ts.
+- no interpolation is used for event-time prices.
+
+Output isolation
+----------------
+Corrected outputs are written separately from old AFT files:
+
+    aft_data_final/
+    aft_data_liquidity_final/
+    aft_results_final/
+
+The existing event_store/, km/, events/, and old aft_data/ directories are not overwritten.
+
+Files
+-----
+1. survival_analysis_utils_final.py
+   Shared file/date helpers and timing validators.
+
+2. survival_analysis_data_pull_final.py
+   All external data access: raw trades, funding, klines/volume, Fear & Greed,
+   and Binance futures metrics.
+
+3. survival_analysis_data_processing_final.py
+   Event-time construction, saved-event tick reconstruction, immutable KM checks,
+   corrected covariates, liquidity augmentation, and AFT preparation.
+
+4. survival_analysis_pipeline_final.py
+   Saved-KM checkpoint discovery, corrected AFT enrichment, monthly pooling,
+   liquidity augmentation, and Weibull / Log-Normal / Log-Logistic AFT fitting.
+
+5. survival_analysis_workflow_final.ipynb
+   Notebook to run the saved-KM reuse path for BTC-UM, BTC-CM, ETH-UM, ETH-CM.
+
+Legacy files
+------------
+survival_analysis.py does not need to be changed and is not imported by this final pipeline.
+The old v6 files are needed only insofar as their already-saved event_store parquet files
+are the input to the final workflow.
+
+Default market roots
+--------------------
+The notebook assumes:
+
+    ./sa_btc_um
+    ./sa_btc_cm
+    ./sa_eth_um
+    ./sa_eth_cm
+
+Each is used as both:
+- km_checkpoint_dir: read-only source of old event_store checkpoints
+- run_dir: location for the new *_final AFT output directories
+
+If the old KM event_store is elsewhere, edit only km_checkpoint_dir in the notebook.
+
+Run order
+---------
+1. Put the four *_final.py files and survival_analysis_workflow_final.ipynb together.
+2. Open survival_analysis_workflow_final.ipynb.
+3. Confirm each MARKET['km_checkpoint_dir'] points at the existing v6 checkpoint root.
+4. Run top to bottom.
+5. The workflow will:
+   a) read saved KM episode checkpoints;
+   b) reload raw trades by original source chunk;
+   c) reconstruct and validate event_tick / tick-1;
+   d) regenerate only corrected covariates;
+   e) save monthly aft_data_final files;
+   f) attach strictly pre-shock Binance metrics;
+   g) validate timing;
+   h) fit Weibull, Log-Normal, and Log-Logistic AFT models.
+
+Current AFT covariates
+----------------------
+- basis_5min
+- fundingRate_bps
+- open_interest
+- shock_size_bps
+- spread_spot_5min
+- taker_long_short
+- vol_spot_5min_pct
+- volume
+
+trader_long_short remains saved but excluded unless intentionally added.
