@@ -43,7 +43,7 @@ def session():
 
 
 def source_days(asset, margin):
-    """Use dates already represented in the thesis metric caches.
+    """Use dates already represented in the paper metric caches.
 
     This preserves their historical coverage (e.g. inverse markets begin when
     Binance began publishing those archives) and avoids thousands of known 404s.
@@ -174,7 +174,7 @@ def main():
         "`sum_open_interest_value` for COIN-M inverse markets. Both source fields are retained "
         "in every raw archive and their daily means are saved in `daily_open_interest_base_units.csv`. "
         "This puts BTC panels in BTC and ETH panels in ETH. Missing dates are gaps, not zeroes. "
-        "Dates follow the coverage of the thesis metric caches. Source URLs and retrieval statuses are in `retrieval_status.csv`.\n", encoding="utf-8")
+        "Dates follow the coverage of the paper metric caches. Source URLs and retrieval statuses are in `retrieval_status.csv`.\n", encoding="utf-8")
     print(coverage.to_string(), flush=True)
     print(f"Saved open-interest positions plot to {OUT / 'open_interest_native_2x2.png'}", flush=True)
 

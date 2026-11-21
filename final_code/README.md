@@ -3,8 +3,9 @@
 The source used for the paper is grouped by paper section:
 
 - `section_4/`: Hasbrouck VECM estimation and main VECM figures.
-- `section_4/appendix/`: Johansen diagnostics, complete-grid robustness, and
-  Appendix Figure 11–13/table generators.
+- `section_4/appendix/`: Johansen diagnostics, complete-grid robustness
+  figures and tables, and trade-activity analysis.
+- `section_4/appendix/corrected_ils/`: corrected ILS figures and Table 4.
 - `section_5_1/`: KM-V8 event identification, covariate construction, and
   December KM figures.
 - `section_5_1/appendix/`: monthly KM curves and 120-second panels for
@@ -20,18 +21,28 @@ to point to the existing result folders. For example:
 
 ```powershell
 python -m final_code.section_4.plot_vecm
+python -m final_code.section_4.appendix.corrected_ils.plots
 python -m final_code.section_5_1.plot_december_km
 python -m final_code.section_5_1.appendix.plot_km_curves
 python -m final_code.section_5_1.appendix.export_km_rows
 python -m final_code.section_5_2.plot_aft_results
 python -m final_code.section_5_2.appendix.plot_aft_diagnostics
+python -m final_code.section_5_2.appendix.midperiod_tables
 ```
 
 The generated data and figures remain in the existing Git-ignored output
 folders described in the repository `README.md`.
+The corrected ILS renderer uses the included summary CSVs and writes to
+`hasbrouck_spec_audit/appendix_ils_correction/`. The separate recalculation
+command, `python -m final_code.section_4.appendix.corrected_ils.ils`,
+requires the corrected interval inputs under `hasbrouck_spec_audit/ils_correction/`
+and the saved VECM and full-grid audit results.
 The Appendix E.2 commands run in order and write to
 `sa_results/km_v8_final_01/appendix_km/` by default.
 Keep the KM run's `comparison_summary.csv`, the daily `events/` files,
 and one complete set of the monthly event Parquets in
 `aft_data_monthly/`, `aft_data_liquidity_monthly/`, or
 `aft_data_liquidity_v5_log_covariates/`.
+
+The `midperiod_tables` module builds Appendix F Tables 18–19 from the saved
+monthly full-model and univariate AFT coefficient CSVs.

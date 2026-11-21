@@ -364,7 +364,7 @@ The two horizons are views of the same fitted survival function.
 ## Data and estimation
 
 The four `data/*_km_curves_*s.csv` files contain the evaluated KM curves on
-the same 0.25-second display grid as the existing thesis plots. Each row
+the same 0.25-second display grid as the existing paper plots. Each row
 identifies the period, market, direction, event count and day coverage.
 The exact event-time KM estimates and risk/event/censor counts through 120 s
 are also exported as two Parquet files in [data/](./data/).

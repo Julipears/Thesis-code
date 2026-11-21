@@ -32,13 +32,13 @@ OUTPUT_METRIC_COLUMNS = list(SOURCE_METRIC_COLUMNS.values())
 class TradeData:
     """Raw Binance trade/funding/kline loader used by the final pipeline.
 
-    The trade-download behavior intentionally follows the existing thesis
+    The trade-download behavior intentionally follows the existing paper
     TradeData implementation so shock/event inputs are not silently redefined.
     """
 
     def __init__(self, symbol: str, source: str = "Binance", cm_um: str = "um"):
         if source != "Binance":
-            raise NotImplementedError("The final thesis pipeline is frozen to Binance data.")
+            raise NotImplementedError("The final paper pipeline is frozen to Binance data.")
         if cm_um not in {"um", "cm"}:
             raise ValueError("cm_um must be 'um' or 'cm'")
         self.symbol = symbol
@@ -218,7 +218,7 @@ class TradeData:
         columns=None,
         n_jobs: int = 10,
     ) -> pd.DataFrame:
-        """Pull Binance klines using the existing thesis timestamp convention."""
+        """Pull Binance klines using the existing paper timestamp convention."""
         symbol = self.symbol
         if kind == "spot":
             url = "https://api.binance.com/api/v3/klines"

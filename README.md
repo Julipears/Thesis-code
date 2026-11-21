@@ -1,6 +1,6 @@
-# Thesis code
+# Paper code
 
-This repository contains the reproducible source for the thesis analysis of
+This repository contains the reproducible source for the paper analysis of
 price discovery and convergence between cryptocurrency spot and perpetual
 markets.
 

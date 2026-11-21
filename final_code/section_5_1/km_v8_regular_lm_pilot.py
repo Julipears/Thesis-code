@@ -447,7 +447,7 @@ def plot_asset_km_month_comparison(
     require_complete: bool = True,
     plot_step_seconds: float = 0.25,
 ) -> Path:
-    """Create the thesis KM panel for one asset from regular-grid event files."""
+    """Create the paper KM panel for one asset from regular-grid event files."""
     output_root = Path(output_root)
     asset = asset.lower()
     if asset not in {"btc", "eth"}:
@@ -523,7 +523,7 @@ def plot_asset_km_month_comparison(
     plot_dir.mkdir(parents=True, exist_ok=True)
     horizon_suffix = "" if horizon == 120 else f"_{horizon:g}s"
     output_path = plot_dir / f"survival_all_graphs_{asset}_v8{horizon_suffix}.png"
-    # Match the thesis notebook's default Matplotlib rendering.  In particular,
+    # Match the paper notebook's default Matplotlib rendering.  In particular,
     # do not upscale to 180 DPI: that makes the 1.8-point step lines and text
     # appear materially heavier than the original figure.
     fig.savefig(output_path, dpi=100, bbox_inches="tight")
@@ -542,7 +542,7 @@ def plot_btc_km_month_comparison(
     require_complete: bool = True,
     plot_step_seconds: float = 0.25,
 ) -> Path:
-    """Backward-compatible wrapper for the BTC thesis panel."""
+    """Backward-compatible wrapper for the BTC paper panel."""
     return plot_asset_km_month_comparison(
         output_root=output_root,
         asset="btc",

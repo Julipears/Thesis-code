@@ -1,4 +1,4 @@
-"""Curated source package for the thesis paper pipeline."""
+"""Curated source package for the paper pipeline."""
 from pathlib import Path
 import sys
 
