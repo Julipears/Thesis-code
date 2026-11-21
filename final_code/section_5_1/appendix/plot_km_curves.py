@@ -54,8 +54,8 @@ def collect_one(job, expected_rows, cache, manifest_hash, root):
     available = sorted(path.name.split("_")[1] for path in files)
     expected_dates = pd.date_range(month + "-01", periods=pd.Period(month).days_in_month).strftime("%Y-%m-%d").tolist()
     previous_record = json.loads(record_file.read_text(encoding="utf-8")) if record_file.exists() else {}
-    if cache_file.exists() and previous_record.get("cache_version") == 2 and previous_record.get("manifest_sha256") == manifest_hash and previous_record.get("available_dates") == available:
-        source = Path(previous_record["source_event_columns_file"])
+    if cache_file.exists() and previous_record.get("cache_version") == 3 and previous_record.get("manifest_sha256") == manifest_hash and previous_record.get("available_dates") == available:
+        source = root / previous_record["source_event_columns_file"]
         if source.exists() and source.stat().st_size == previous_record["source_file_bytes"] and source.stat().st_mtime_ns == previous_record["source_file_mtime_ns"]:
             return previous_record, pd.read_parquet(cache_file)
     # The base monthly AFT exports retain the original event columns before
@@ -105,7 +105,7 @@ def collect_one(job, expected_rows, cache, manifest_hash, root):
         assert check.weight_daily.eq(check.weight_monthly).all(), f"Saved monthly event columns do not reproduce the directly read daily event files: {source}"
         daily_cache_verified = True
     missing = sorted(set(expected_dates) - set(available))
-    record = dict(market=market, first=first, period=month, expected_days=len(expected_dates), available_days=len(available), missing_days=len(missing), missing_dates=missing, available_dates=available, raw_event_rows=raw_rows, excluded_missing_value_rows=dropped, n_events=int(aggregated.weight.sum()), durations_above_120s_censored=rows_over_120, manifest_sha256=manifest_hash, cache_version=2, source_event_columns_file=str(source), source_file_bytes=source.stat().st_size, source_file_mtime_ns=source.stat().st_mtime_ns, validated_against_daily_event_cache=daily_cache_verified)
+    record = dict(market=market, first=first, period=month, expected_days=len(expected_dates), available_days=len(available), missing_days=len(missing), missing_dates=missing, available_dates=available, raw_event_rows=raw_rows, excluded_missing_value_rows=dropped, n_events=int(aggregated.weight.sum()), durations_above_120s_censored=rows_over_120, manifest_sha256=manifest_hash, cache_version=3, source_event_columns_file=source.relative_to(root).as_posix(), source_file_bytes=source.stat().st_size, source_file_mtime_ns=source.stat().st_mtime_ns, validated_against_daily_event_cache=daily_cache_verified)
     assert record["n_events"] == raw_rows - dropped
     aggregated.to_parquet(cache_file, index=False)
     atomic_json(record_file, record)
@@ -338,7 +338,7 @@ def main():
     assert len(pngs) == len(pdfs) == 284, (len(pngs), len(pdfs))
     assert len(curves) == n_models == 520
     assert sum(len(frame) for frame in frames.values()) == 292240
-    validation = dict(source=str(root), source_run_manifest_sha256=manifest_hash, source_daily_event_files=len(found), source_event_rows=int(coverage.raw_event_rows.sum()), source_event_columns="Unchanged saved event columns in monthly base AFT exports; exact daily event counts, dates, markets, origins, grid and methodology verified.", monthly_series_also_validated_against_direct_daily_event_reads=sum(row["validated_against_daily_event_cache"] for row in records), excluded_missing_value_rows=int(coverage.excluded_missing_value_rows.sum()), basis_resolution_pct=90, shock_detection_grid="1s", source_significance_values=sorted(manifest.significance.unique().tolist()), period_range=["2021-01", "2025-12"], monthly_series=480, annual_series=40, annual_estimator="Pool events within calendar year, retaining integer event-count weights; do not average monthly curves.", display_horizons_seconds=list(HORIZONS), display_step_seconds=STEP, monthly_curve_rows_120s=len(frames[("monthly", 120)]), monthly_curve_rows_20s=len(frames[("monthly", 20)]), annual_curve_rows_120s=len(frames[("annual", 120)]), annual_curve_rows_20s=len(frames[("annual", 20)]), individual_monthly_plots=240, individual_annual_plots=20, monthly_overview_figures=20, annual_overview_figures=4, png_figures=len(pngs), vector_pdf_figures=len(pdfs), overview_pdf_books=4, max_absolute_error_against_KM_product_formula=max_product_error, existing_december_curve_reproduction=december_checks, missing_day_market_direction_records=len(missing_rows), elapsed_seconds=round(time.monotonic()-started, 1))
+    validation = dict(source=root.name, source_run_manifest_sha256=manifest_hash, source_daily_event_files=len(found), source_event_rows=int(coverage.raw_event_rows.sum()), source_event_columns="Unchanged saved event columns in monthly base AFT exports; exact daily event counts, dates, markets, origins, grid and methodology verified.", monthly_series_also_validated_against_direct_daily_event_reads=sum(row["validated_against_daily_event_cache"] for row in records), excluded_missing_value_rows=int(coverage.excluded_missing_value_rows.sum()), basis_resolution_pct=90, shock_detection_grid="1s", source_significance_values=sorted(manifest.significance.unique().tolist()), period_range=["2021-01", "2025-12"], monthly_series=480, annual_series=40, annual_estimator="Pool events within calendar year, retaining integer event-count weights; do not average monthly curves.", display_horizons_seconds=list(HORIZONS), display_step_seconds=STEP, monthly_curve_rows_120s=len(frames[("monthly", 120)]), monthly_curve_rows_20s=len(frames[("monthly", 20)]), annual_curve_rows_120s=len(frames[("annual", 120)]), annual_curve_rows_20s=len(frames[("annual", 20)]), individual_monthly_plots=240, individual_annual_plots=20, monthly_overview_figures=20, annual_overview_figures=4, png_figures=len(pngs), vector_pdf_figures=len(pdfs), overview_pdf_books=4, max_absolute_error_against_KM_product_formula=max_product_error, existing_december_curve_reproduction=december_checks, missing_day_market_direction_records=len(missing_rows), elapsed_seconds=round(time.monotonic()-started, 1))
     atomic_json(out / "validation.json", validation)
     readme = """# Monthly and annual Kaplan–Meier curves
 
@@ -369,7 +369,7 @@ identifies the period, market, direction, event count and day coverage.
 The exact event-time KM estimates and risk/event/censor counts through 120 s
 are also exported as two Parquet files in [data/](./data/).
 
-Some individual event files are OneDrive placeholders that cannot be opened.
+Some individual event files are unavailable filesystem placeholders that cannot be opened.
 The saved base monthly AFT exports retain their original event durations,
 censoring indicators, timestamps and methodology fields. Those unchanged
 event columns are used here, before any model-specific covariate filtering.

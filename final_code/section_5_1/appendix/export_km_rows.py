@@ -90,7 +90,7 @@ overview page, row and months.
     source_script = Path(__file__).resolve()
     if source_script.parent != OUT:
         shutil.copyfile(source_script, OUT / source_script.name)
-    validation = dict(png_rows=30, graphs_per_row=4, source_overview_pages=10, rows_per_page=3, horizon_seconds=120, source_curve_csv=str(SOURCE), source_curve_sha256=hashlib.sha256(SOURCE.read_bytes()).hexdigest(), numerical_curve_refit=False, original_plotting_functions_reused=True, pngs_checked=True, rows=entries)
+    validation = dict(png_rows=30, graphs_per_row=4, source_overview_pages=10, rows_per_page=3, horizon_seconds=120, source_curve_csv=f"data/{SOURCE.name}", source_curve_sha256=hashlib.sha256(SOURCE.read_bytes()).hexdigest(), numerical_curve_refit=False, original_plotting_functions_reused=True, pngs_checked=True, rows=entries)
     (OUT / "validation.json").write_text(json.dumps(validation, indent=2), encoding="utf-8")
     archive_path = OUT / "KM_monthly_rows_120s.zip"
     names = [entry["file"] for entry in entries] + ["README.md", "row_index.csv", "validation.json", source_script.name]

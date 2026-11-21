@@ -212,7 +212,7 @@ def run_market(market: str, start: pd.Timestamp, end: pd.Timestamp) -> None:
                 del data
             gc.collect()
 
-        # The daily result CSV is authoritative.  OneDrive can briefly lock the
+        # The daily result CSV is authoritative.  File synchronization can briefly lock the
         # derived annual summary; that should not terminate a multi-day audit.
         try:
             write_period_summary(results_file, summary_file)
