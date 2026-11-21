@@ -15,7 +15,7 @@ import traceback
 import numpy as np
 import pandas as pd
 
-import audit_hasbrouck_one_hour as hasbrouck
+from final_code.section_4.appendix import fit_one_hour as hasbrouck
 from trade_data_pull import TradeData
 from vecm_hasbrouck3 import generate_multiple_lags
 

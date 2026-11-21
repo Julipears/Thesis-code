@@ -6,7 +6,7 @@ import json
 
 import pandas as pd
 
-from audit_hasbrouck_one_hour import current_fit, rows_for_result
+from final_code.section_4.appendix.fit_one_hour import current_fit, rows_for_result
 from trade_data_pull import TradeData
 from vecm_hasbrouck3 import generate_multiple_lags
 

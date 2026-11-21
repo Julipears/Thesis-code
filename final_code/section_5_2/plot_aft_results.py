@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-import plot_aft_v8_log_covariate_results as base
+from final_code.section_5_2 import aft_plot_utils as base
 
 
 base.INPUT_DIR = Path("sa_results/km_v8_final_01/aft_data_liquidity_v5_log_covariates")

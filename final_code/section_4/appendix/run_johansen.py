@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MARKETS = ("btc_um", "btc_cm", "eth_um", "eth_cm")
 LOG_DIR = PROJECT_ROOT / "hasbrouck_spec_audit/johansen_rotating_hour/run_logs"
 
@@ -23,7 +23,7 @@ def main() -> None:
             handles.append(handle)
             command = [
                 sys.executable,
-                "-m", "final_code.section_4.johansen_rotating_hour_audit",
+                "-m", "final_code.section_4.appendix.johansen_audit",
                 "--markets", market,
                 "--start", "2021-01-01",
                 "--end", "2025-12-31",

@@ -354,9 +354,10 @@ class SimpleMVAR:
 
         his_mid = 0.5 * (his_lower + his_upper)
 
+        # Square the cross-products before normalizing the two market shares.
         with np.errstate(divide="ignore", invalid="ignore"):
-            il_raw = np.abs(his_mid / cs)
-            ils_mid = il_raw / np.nansum(il_raw)
+            il_squared = np.square(his_mid * cs[::-1])
+            ils_mid = il_squared / il_squared.sum()
 
         return {
             "series": price_names,
@@ -1458,9 +1459,10 @@ def price_discovery_shares(model):
     # -------------------------
     # Information leadership shares (ILS)
     # -------------------------
-    # Uses midpoint HIS by default
-    il_raw = np.abs(his_mid / cs)
-    ils_mid = il_raw / il_raw.sum()
+    # Square the cross-products before normalizing the two market shares.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        il_squared = np.square(his_mid * cs[::-1])
+        ils_mid = il_squared / il_squared.sum()
 
     out = {
         "series": model.price_names,

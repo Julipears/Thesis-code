@@ -283,7 +283,7 @@ def draw(summary: pd.DataFrame, markets: list[str], filename: str, title: str) -
         fig, axes = plt.subplots(2, 2, figsize=(17, 9), constrained_layout=True)
         axes = list(axes.flat)
     else:
-        fig, axes = plt.subplots(1, len(markets), figsize=(17, 5), constrained_layout=True)
+        fig, axes = plt.subplots(1, len(markets), figsize=(17, 4.3), constrained_layout=True)
         axes = list(np.atleast_1d(axes).flat)
     for ax, market, table in zip(axes, markets, tables):
         sns.heatmap(table, ax=ax, cmap="coolwarm", center=0.5, vmin=vmin, vmax=vmax,
@@ -291,7 +291,7 @@ def draw(summary: pd.DataFrame, markets: list[str], filename: str, title: str) -
         ax.set_title(CONFIGS[market][3])
         ax.set_xlabel("Regime")
         ax.set_ylabel("Latency")
-        ax.tick_params(axis="y", labelsize=8)
+        ax.tick_params(axis="y", labelsize=10, rotation=0)
         ax.tick_params(axis="x", rotation=35)
     scalar = plt.cm.ScalarMappable(norm=plt.Normalize(vmin=vmin, vmax=vmax), cmap="coolwarm")
     scalar.set_array([])
@@ -343,8 +343,17 @@ def draw_spot_perp(summary: pd.DataFrame, markets: list[str], filename: str, tit
     plt.close(fig)
 
 
+def draw_spot_by_contract(summary: pd.DataFrame) -> None:
+    """Draw two spot-only figures, each with BTC left and ETH right."""
+    HEATMAP_OUT.mkdir(parents=True, exist_ok=True)
+    for margin, label in [("um", "Linear (UM)"), ("cm", "Inverse (CM)")]:
+        draw(summary, [f"btc_{margin}", f"eth_{margin}"],
+             f"hasbrouck3_{margin}_spot_heatmap",
+             f"{label} VECM spot price leadership by regime")
+
+
 def generate_regime_heatmaps() -> None:
-    """Generate regime heatmaps and their summary CSV files."""
+    """Generate two spot-only regime heatmaps and their summary CSV files."""
     HEATMAP_OUT.mkdir(parents=True, exist_ok=True)
     data = pd.concat([load_market(market) for market in CONFIGS], ignore_index=True)
     summary = summarize(data)
@@ -354,19 +363,7 @@ def generate_regime_heatmaps() -> None:
     data.groupby(["market", "latency"])["interval"].agg(
         first_interval="min", last_interval="max", model_intervals="nunique"
     ).reset_index().to_csv(HEATMAP_OUT / "vecm_input_coverage.csv", index=False)
-    draw(summary, list(CONFIGS), "vecm_regime_heatmaps_all_contracts_april2023",
-         "VECM price leadership by regime (April 2023 policy boundary)")
-    draw(summary, ["btc_um", "btc_cm"], "vecm_regime_heatmaps_btc_april2023",
-         "BTC VECM price leadership by regime")
-    draw(summary, ["eth_um", "eth_cm"], "vecm_regime_heatmaps_eth_april2023",
-         "ETH VECM price leadership by regime")
-    draw_spot_perp(perspective_summary, list(CONFIGS),
-                   "vecm_regime_heatmaps_spot_perp_all_contracts_april2023",
-                   "VECM price leadership by regime: spot and perpetual perspectives")
-    for market in CONFIGS:
-        draw_spot_perp(perspective_summary, [market],
-                       f"{FILE_LABELS[market]}_spot_perp_heatmap_april2023",
-                       f"{CONFIGS[market][3]} VECM price leadership by regime")
+    draw_spot_by_contract(summary)
     print(summary.groupby("market")["model_intervals"].sum().to_string())
     print(f"Saved outputs to {HEATMAP_OUT}")
 

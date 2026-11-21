@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 from unittest.mock import patch
 
-import run_hasbrouck_random_full_grid as audit
+from final_code.section_4.appendix import run_full_grid as audit
 
 
 with tempfile.TemporaryDirectory(dir=audit.ROOT) as temp:

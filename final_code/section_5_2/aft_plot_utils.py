@@ -56,23 +56,29 @@ def coefficient_rows(manifest: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_heatmaps(coefficients: pd.DataFrame) -> None:
+    """Combine BTC and ETH in two rows, retaining each asset's colour scale."""
     panels = [("um", "spot"), ("um", "perp"), ("cm", "spot"), ("cm", "perp")]
-    for asset in ("btc", "eth"):
+    fig, axes = plt.subplots(2, 4, figsize=(32, 12), sharey="row", constrained_layout=True)
+    for row, asset in enumerate(("btc", "eth")):
         tables = [coefficients[(coefficients.market == f"{asset}_{margin}") & (coefficients["first"] == first)]
                   .pivot(index="covariate", columns="period", values="standardized_coef").reindex(COVARIATES)
                   for margin, first in panels]
         finite = np.concatenate([t.to_numpy()[np.isfinite(t.to_numpy())] for t in tables if np.isfinite(t.to_numpy()).any()])
         limit = max(float(np.nanpercentile(np.abs(finite), 98)), 1e-9)
-        fig, axes = plt.subplots(1, 4, figsize=(32, 6), sharey=True, constrained_layout=True)
         for i, ((margin, first), table) in enumerate(zip(panels, tables)):
-            sns.heatmap(table, cmap="coolwarm", center=0, vmin=-limit, vmax=limit, ax=axes[i], cbar=i == 3,
+            ax = axes[row, i]
+            sns.heatmap(table, cmap="coolwarm", center=0, vmin=-limit, vmax=limit, ax=ax, cbar=i == 3,
                         cbar_kws={"label": "Change in log duration per 1-SD increase"})
-            axes[i].set_title(("Linear" if margin == "um" else "Inverse") + f", {first}-origin")
-            axes[i].set_xlabel("Month"); axes[i].set_ylabel("Covariate" if i == 0 else "")
-            axes[i].tick_params(axis="x", labelrotation=90, labelsize=6)
-        fig.suptitle(f"{asset.upper()} V8-event Log-Logistic AFT standardized coefficients")
-        fig.savefig(OUTPUT / f"aft_coefficient_heatmap_{asset}_v8_loglogistic_4col.png", dpi=160, bbox_inches="tight")
-        plt.close(fig)
+            contract = "Linear" if margin == "um" else "Inverse"
+            ax.set_title(f"{asset.upper()}: {contract}, {first}-origin")
+            ax.set_xlabel("Month"); ax.set_ylabel("Covariate" if i == 0 else "")
+            ax.tick_params(axis="x", labelrotation=90, labelsize=6)
+    fig.suptitle("BTC and ETH V8-event Log-Logistic AFT standardized coefficients")
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    for extension in ("png", "pdf"):
+        fig.savefig(OUTPUT / f"aft_coefficient_heatmap_btc_eth_v8_loglogistic_2x4.{extension}",
+                    dpi=160, bbox_inches="tight")
+    plt.close(fig)
 
 
 def plot_concordance(manifest: pd.DataFrame) -> None:

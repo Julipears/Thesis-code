@@ -20,7 +20,7 @@ import pandas as pd
 import polars as pl
 import requests
 
-# note that open interest will be replaced in reconstruct_aft_v8_log_covariates.py with the unit-agreeing Binance fields
+# note that open interest will be replaced in build_aft_covariates.py with the unit-agreeing Binance fields
 SOURCE_METRIC_COLUMNS = {
     "sum_open_interest": "open_interest",
     "sum_toptrader_long_short_ratio": "trader_long_short",

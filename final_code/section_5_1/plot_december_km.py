@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import pandas as pd
-from km_v8_regular_lm_pilot import plot_asset_km_month_comparison
+from final_code.section_5_1.km_v8_regular_lm_pilot import plot_asset_km_month_comparison
 
 ROOT = Path("sa_results/km_v8_final_01")
 MONTHS = tuple(f"{year}-12" for year in range(2021, 2026))

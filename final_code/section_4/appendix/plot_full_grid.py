@@ -7,7 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
-import vecm_plotting as plots
+from final_code.section_4 import plot_vecm as plots
 
 
 def main():

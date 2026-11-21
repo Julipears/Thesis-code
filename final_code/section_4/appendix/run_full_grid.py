@@ -16,7 +16,7 @@ import sys
 import time
 import traceback
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ROOT = PROJECT_ROOT
 OUT = ROOT / "hasbrouck_spec_audit/random_10_days_month_full_grid"
 CONTRACTS = {"btc_um": ("BTCUSDT", "um"), "btc_cm": ("BTCUSDT", "cm"),
@@ -98,7 +98,7 @@ def worker(plan, limit=12):
     import gc
     import numpy as np
     import pandas as pd
-    from audit_hasbrouck_one_hour import current_fit, rows_for_result
+    from final_code.section_4.appendix.fit_one_hour import current_fit, rows_for_result
     from trade_data_pull import TradeData
     from vecm_hasbrouck3 import generate_multiple_lags
 
@@ -209,7 +209,7 @@ def supervise(plan):
             write_json(OUT / "active.json", dict(stage="starting", updated_epoch=time.time(), updated_at=now()))
             with (OUT / "worker.log").open("a", encoding="utf-8") as output:
                 worker_process = subprocess.Popen([sys.executable, "-u", "-m",
-                    "final_code.section_4.run_hasbrouck_random_full_grid", "--worker"],
+                    "final_code.section_4.appendix.run_full_grid", "--worker"],
                     cwd=ROOT, stdout=output, stderr=subprocess.STDOUT,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 log(f"Worker started pid={worker_process.pid}")
