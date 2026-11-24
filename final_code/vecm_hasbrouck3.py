@@ -334,7 +334,7 @@ class SimpleMVAR:
         else:
             cs = (alpha_perp / cs_denom).flatten()
 
-        denom = float(alpha_perp.T @ (np.eye(2, dtype=np.float32) - gamma_sum) @ beta_perp)
+        denom = (alpha_perp.T @ (np.eye(2, dtype=np.float32) - gamma_sum) @ beta_perp).item()
         if np.isclose(denom, 0.0):
             raise ValueError("Long-run impact denominator is near zero; shares are unstable.")
 
@@ -858,7 +858,7 @@ class VECMHasbrouck2:
         *,
         fill_gaps=False,
         max_fill_gap_ms=None,
-        boundary_lookback="1H",
+        boundary_lookback="1h",
         n_jobs=10,
         save_csv=False,
         folder_name="staleness_diagnostics",
@@ -1420,7 +1420,7 @@ def price_discovery_shares(model):
     # -------------------------
     # Long-run impact matrix C
     # -------------------------
-    denom = float(alpha_perp.T @ (np.eye(2, dtype=np.float32) - gamma_sum) @ beta_perp)
+    denom = (alpha_perp.T @ (np.eye(2, dtype=np.float32) - gamma_sum) @ beta_perp).item()
     if np.isclose(denom, 0.0):
         raise ValueError("Long-run impact denominator is near zero; shares are unstable.")
 

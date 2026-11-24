@@ -26,10 +26,10 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from lifelines import KaplanMeierFitter
 
+from final_code import PAPER_DATA, RESULTS
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_INPUT = PROJECT_ROOT / "sa_results/km_v8_final_01"
-DEFAULT_OUTPUT = DEFAULT_INPUT / "appendix_km"
+
+DEFAULT_OUTPUT = RESULTS / "km" / "appendix"
 MONTHS = tuple(pd.period_range("2021-01", "2025-12", freq="M").astype(str))
 YEARS = tuple(str(year) for year in range(2021, 2026))
 MARKETS = ("btc_um", "btc_cm", "eth_um", "eth_cm")
@@ -165,15 +165,101 @@ def verify_decembers(root, frames):
     return checks
 
 
+def render_figures(curves, out):
+    # Individual plots retain the original blue/orange, solid/dashed styles,
+    # 1.8-point line width, 100-DPI PNG output, and 0.25-second display grid.
+    n_individual = 0
+    figures = []
+    for aggregation, periods in (("monthly", MONTHS), ("annual", YEARS)):
+        for asset in ("btc", "eth"):
+            for period in periods:
+                for horizon in HORIZONS:
+                    base = out / "figures" / aggregation / asset / period[:4] / f"{asset}_{period}_{horizon}s"
+                    figures.append(base)
+                    if not (base.with_suffix(".png").exists() and base.with_suffix(".pdf").exists()):
+                        fig, ax = plt.subplots(figsize=(4.5, 3.5))
+                        incomplete = draw_panel(ax, asset, period, aggregation, horizon, curves)
+                        ax.set_ylabel("Probability unresolved")
+                        decorate(fig, [ax], asset, "Monthly" if aggregation == "monthly" else "Annual", incomplete, compact=True)
+                        save_pair(fig, base)
+                        plt.close(fig)
+                    n_individual += 1
+                if (aggregation == "monthly" and period.endswith("-12")) or aggregation == "annual":
+                    print(f"Rendered {aggregation} {asset.upper()} through {period}; {n_individual}/260 individual plot pairs completed.", flush=True)
+
+    for horizon in HORIZONS:
+        with PdfPages(out / f"monthly_{horizon}s.pdf") as book:
+            for asset in ("btc", "eth"):
+                for year in YEARS:
+                    fig, axes = plt.subplots(3, 4, figsize=(18, 10.5), sharex=True, sharey=True)
+                    missing = False
+                    for ax, month in zip(axes.flat, (month for month in MONTHS if month.startswith(year))):
+                        missing |= draw_panel(ax, asset, month, "monthly", horizon, curves)
+                        if ax in list(axes[:, 0]):
+                            ax.set_ylabel("Probability unresolved")
+                    decorate(fig, list(axes.flat), asset, f"Monthly, {year}", missing)
+                    base = out / "figures" / "monthly_overviews" / f"{asset}_{year}_{horizon}s"
+                    save_pair(fig, base)
+                    figures.append(base)
+                    book.savefig(fig, bbox_inches="tight")
+                    plt.close(fig)
+            assert book.get_pagecount() == 10
+        with PdfPages(out / f"annual_{horizon}s.pdf") as book:
+            for asset in ("btc", "eth"):
+                fig, axes = plt.subplots(1, 5, figsize=(22.5, 3.5), sharex=True, sharey=True)
+                missing = False
+                for ax, year in zip(axes, YEARS):
+                    missing |= draw_panel(ax, asset, year, "annual", horizon, curves)
+                axes[0].set_ylabel("Probability unresolved")
+                decorate(fig, list(axes), asset, "Annual, 2021–2025", missing)
+                base = out / "figures" / "annual_overviews" / f"{asset}_{horizon}s"
+                save_pair(fig, base)
+                figures.append(base)
+                book.savefig(fig, bbox_inches="tight")
+                plt.close(fig)
+            assert book.get_pagecount() == 2
+        print(f"Completed the {horizon}s monthly and annual overview PDF books.", flush=True)
+    return figures
+
+
+def render_saved_curves(out):
+    source = PAPER_DATA / "section_5_1"
+    data_dir = out / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    curves = {}
+    for aggregation in ("monthly", "annual"):
+        frame = pd.read_csv(source / f"{aggregation}_km.csv.gz",
+                            dtype={"period": str}, float_precision="round_trip")
+        for (period, market, first), group in frame.groupby(["period", "market", "first"], sort=False):
+            group = group.sort_values("timeline")
+            curves[(aggregation, market, first, period)] = {
+                "timeline": group["timeline"].to_numpy(),
+                "survival": group["survival"].to_numpy(),
+                "missing_days": int(group["missing_days"].iloc[0]),
+            }
+        for horizon in HORIZONS:
+            frame.loc[frame["timeline"].le(horizon)].to_csv(
+                data_dir / f"{aggregation}_{horizon}s.csv", index=False
+            )
+    for name in ("monthly_coverage.csv", "annual_coverage.csv",
+                 "missing_days.csv", "km_summary.csv"):
+        shutil.copyfile(source / name, data_dir / name)
+    render_figures(curves, out)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
+    parser.add_argument("--input", type=Path, help="Fit from the daily and monthly event files in this run directory.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--cache", type=Path, default=DEFAULT_INPUT / "km_all_curves_work")
+    parser.add_argument("--cache", type=Path, help="Directory for intermediate counts when refitting from events.")
     parser.add_argument("--jobs", type=int, default=8)
     args = parser.parse_args()
+    if args.input is None:
+        render_saved_curves(args.output)
+        return
     started = time.monotonic()
-    root, out, cache = args.input.resolve(), args.output.resolve(), args.cache.resolve()
+    root, out = args.input.resolve(), args.output.resolve()
+    cache = (args.cache or root / "km_all_curves_work").resolve()
     out.mkdir(parents=True, exist_ok=True)
     cache.mkdir(parents=True, exist_ok=True)
     data_dir = out / "data"
@@ -212,14 +298,14 @@ def main():
     records.sort(key=lambda row: (row["market"], row["first"], row["period"]))
     coverage = pd.DataFrame([{key: value for key, value in row.items() if key not in {"available_dates", "manifest_sha256"}} for row in records])
     coverage["missing_dates"] = coverage.missing_dates.map(lambda dates: "; ".join(dates))
-    coverage.to_csv(data_dir / "monthly_event_coverage.csv", index=False)
+    coverage.to_csv(data_dir / "monthly_coverage.csv", index=False)
     monthly_record = {(row["market"], row["first"], row["period"]): row for row in records}
     annual_record = {}
     missing_rows = []
     for row in records:
         for date in row["missing_dates"]:
             missing_rows.append(dict(market=row["market"], first=row["first"], date=date, period=row["period"]))
-    pd.DataFrame(missing_rows).to_csv(data_dir / "missing_daily_event_files.csv", index=False)
+    pd.DataFrame(missing_rows).to_csv(data_dir / "missing_days.csv", index=False)
     assert int(coverage.raw_event_rows.sum()) == int(manifest.v8_events.sum())
 
     frames = {(aggregation, horizon): [] for aggregation in ("monthly", "annual") for horizon in HORIZONS}
@@ -277,64 +363,17 @@ def main():
             writer.close()
     for key, parts in frames.items():
         frames[key] = pd.concat(parts, ignore_index=True)
-        frames[key].to_csv(data_dir / f"{key[0]}_km_curves_{key[1]}s.csv", index=False)
-    pd.DataFrame(summary_rows).to_csv(data_dir / "km_curve_summary.csv", index=False)
+        frames[key].to_csv(data_dir / f"{key[0]}_{key[1]}s.csv", index=False)
+    pd.DataFrame(summary_rows).to_csv(data_dir / "km_summary.csv", index=False)
     annual_coverage = pd.DataFrame(annual_record.values())
     annual_coverage["missing_dates"] = annual_coverage.missing_dates.map(lambda dates: "; ".join(dates))
-    annual_coverage.to_csv(data_dir / "annual_event_coverage.csv", index=False)
+    annual_coverage.to_csv(data_dir / "annual_coverage.csv", index=False)
     december_checks = verify_decembers(root, frames)
     print("All existing December curves reproduced, including event counts and both display horizons.", flush=True)
 
-    # Individual plots retain the original blue/orange, solid/dashed styles,
-    # 1.8-point line width, 100-DPI PNG output, and 0.25-second display grid.
-    n_individual = 0
-    for aggregation, periods in (("monthly", MONTHS), ("annual", YEARS)):
-        for asset in ("btc", "eth"):
-            for period in periods:
-                for horizon in HORIZONS:
-                    base = out / "figures" / aggregation / asset / period[:4] / f"km_{asset}_{period}_{horizon}s"
-                    if not (base.with_suffix(".png").exists() and base.with_suffix(".pdf").exists()):
-                        fig, ax = plt.subplots(figsize=(4.5, 3.5))
-                        incomplete = draw_panel(ax, asset, period, aggregation, horizon, curves)
-                        ax.set_ylabel("Probability unresolved")
-                        decorate(fig, [ax], asset, "Monthly" if aggregation == "monthly" else "Annual", incomplete, compact=True)
-                        save_pair(fig, base)
-                        plt.close(fig)
-                    n_individual += 1
-                if (aggregation == "monthly" and period.endswith("-12")) or aggregation == "annual":
-                    print(f"Rendered {aggregation} {asset.upper()} through {period}; {n_individual}/260 individual plot pairs completed.", flush=True)
-
-    for horizon in HORIZONS:
-        with PdfPages(out / f"KM_monthly_overview_{horizon}s.pdf") as book:
-            for asset in ("btc", "eth"):
-                for year in YEARS:
-                    fig, axes = plt.subplots(3, 4, figsize=(18, 10.5), sharex=True, sharey=True)
-                    missing = False
-                    for ax, month in zip(axes.flat, (month for month in MONTHS if month.startswith(year))):
-                        missing |= draw_panel(ax, asset, month, "monthly", horizon, curves)
-                        if ax in list(axes[:, 0]):
-                            ax.set_ylabel("Probability unresolved")
-                    decorate(fig, list(axes.flat), asset, f"Monthly, {year}", missing)
-                    save_pair(fig, out / "figures" / "monthly_overviews" / f"km_{asset}_{year}_all_months_{horizon}s")
-                    book.savefig(fig, bbox_inches="tight")
-                    plt.close(fig)
-            assert book.get_pagecount() == 10
-        with PdfPages(out / f"KM_annual_overview_{horizon}s.pdf") as book:
-            for asset in ("btc", "eth"):
-                fig, axes = plt.subplots(1, 5, figsize=(22.5, 3.5), sharex=True, sharey=True)
-                missing = False
-                for ax, year in zip(axes, YEARS):
-                    missing |= draw_panel(ax, asset, year, "annual", horizon, curves)
-                axes[0].set_ylabel("Probability unresolved")
-                decorate(fig, list(axes), asset, "Annual, 2021–2025", missing)
-                save_pair(fig, out / "figures" / "annual_overviews" / f"km_{asset}_annual_comparison_{horizon}s")
-                book.savefig(fig, bbox_inches="tight")
-                plt.close(fig)
-            assert book.get_pagecount() == 2
-        print(f"Completed the {horizon}s monthly and annual overview PDF books.", flush=True)
-
-    pngs = sorted((out / "figures").rglob("*.png"))
-    pdfs = sorted((out / "figures").rglob("*.pdf"))
+    figures = render_figures(curves, out)
+    pngs = [base for base in figures if base.with_suffix(".png").is_file()]
+    pdfs = [base for base in figures if base.with_suffix(".pdf").is_file()]
     assert len(pngs) == len(pdfs) == 284, (len(pngs), len(pdfs))
     assert len(curves) == n_models == 520
     assert sum(len(frame) for frame in frames.values()) == 292240
@@ -348,12 +387,12 @@ The saved run manifest records a significance threshold of 0.01.
 
 ## Start here
 
-- [Monthly overview, 20 s](./KM_monthly_overview_20s.pdf): 10 pages, one
+- [Monthly overview, 20 s](./monthly_20s.pdf): 10 pages, one
   BTC/ETH asset-year per page, with all 12 months in a 3-by-4 grid.
-- [Monthly overview, 120 s](./KM_monthly_overview_120s.pdf): the same pages
+- [Monthly overview, 120 s](./monthly_120s.pdf): the same pages
   with the full display horizon.
-- [Annual overview, 20 s](./KM_annual_overview_20s.pdf) and
-  [annual overview, 120 s](./KM_annual_overview_120s.pdf): BTC and ETH, each
+- [Annual overview, 20 s](./annual_20s.pdf) and
+  [annual overview, 120 s](./annual_120s.pdf): BTC and ETH, each
   with separate curves for 2021, 2022, 2023, 2024 and 2025.
 
 Each panel has four curves: linear spot (blue solid), linear perp (blue
@@ -363,7 +402,7 @@ The two horizons are views of the same fitted survival function.
 
 ## Data and estimation
 
-The four `data/*_km_curves_*s.csv` files contain the evaluated KM curves on
+The four `data/*_*s.csv` files contain the evaluated KM curves on
 the same 0.25-second display grid as the existing paper plots. Each row
 identifies the period, market, direction, event count and day coverage.
 The exact event-time KM estimates and risk/event/censor counts through 120 s
@@ -407,11 +446,8 @@ formula, bounds, and monotonicity. All five previously saved December panels
 for each asset were reproduced numerically, including event counts, at both
 horizons. See [validation.json](./validation.json).
 
-The standalone generator [plot_km_curves.py](./plot_km_curves.py)
-accepts `--input`, `--output`, `--cache`, and `--jobs`. Its input is the saved
-`sa_results/km_v8_final_01` directory. It requires NumPy, pandas, PyArrow,
-Matplotlib and lifelines. It reads saved events; it does not rerun event
-identification or edit the research repository.
+The generator accepts `--input` with the full run directory. It refits KM
+curves using the saved events. [plot_km_curves.py](./plot_km_curves.py)
 """
     (out / "README.md").write_text(readme, encoding="utf-8")
     if Path(__file__).resolve() != out / Path(__file__).name:
@@ -419,7 +455,7 @@ identification or edit the research repository.
     exports = sorted(path for path in out.rglob("*") if path.is_file() and path.suffix.lower() != ".zip" and path.name != "file_manifest.json")
     file_manifest = [{"file":path.relative_to(out).as_posix(), "bytes":path.stat().st_size, "sha256":hashlib.sha256(path.read_bytes()).hexdigest()} for path in exports]
     atomic_json(out / "file_manifest.json", file_manifest)
-    archive_path = out / "KM_monthly_and_annual.zip"
+    archive_path = out / "km.zip"
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for path in exports + [out / "file_manifest.json"]:
             archive.write(path, path.relative_to(out))

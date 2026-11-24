@@ -1,0 +1,41 @@
+market,first,period,expected_days,available_days,missing_days,missing_dates
+btc_um,spot,2021,365,365,0,
+btc_um,perp,2021,365,365,0,
+btc_cm,spot,2021,365,365,0,
+btc_cm,perp,2021,365,365,0,
+eth_um,spot,2021,365,365,0,
+eth_um,perp,2021,365,365,0,
+eth_cm,spot,2021,365,365,0,
+eth_cm,perp,2021,365,365,0,
+btc_um,spot,2022,365,365,0,
+btc_um,perp,2022,365,365,0,
+btc_cm,spot,2022,365,365,0,
+btc_cm,perp,2022,365,365,0,
+eth_um,spot,2022,365,365,0,
+eth_um,perp,2022,365,365,0,
+eth_cm,spot,2022,365,364,1,2022-10-17
+eth_cm,perp,2022,365,364,1,2022-10-17
+btc_um,spot,2023,365,365,0,
+btc_um,perp,2023,365,365,0,
+btc_cm,spot,2023,365,365,0,
+btc_cm,perp,2023,365,365,0,
+eth_um,spot,2023,365,365,0,
+eth_um,perp,2023,365,365,0,
+eth_cm,spot,2023,365,363,2,2023-09-25; 2023-09-26
+eth_cm,perp,2023,365,363,2,2023-09-25; 2023-09-26
+btc_um,spot,2024,366,366,0,
+btc_um,perp,2024,366,366,0,
+btc_cm,spot,2024,366,364,2,2024-06-12; 2024-06-13
+btc_cm,perp,2024,366,364,2,2024-06-12; 2024-06-13
+eth_um,spot,2024,366,366,0,
+eth_um,perp,2024,366,366,0,
+eth_cm,spot,2024,366,366,0,
+eth_cm,perp,2024,366,366,0,
+btc_um,spot,2025,365,365,0,
+btc_um,perp,2025,365,365,0,
+btc_cm,spot,2025,365,365,0,
+btc_cm,perp,2025,365,365,0,
+eth_um,spot,2025,365,362,3,2025-10-30; 2025-10-31; 2025-11-03
+eth_um,perp,2025,365,362,3,2025-10-30; 2025-10-31; 2025-11-03
+eth_cm,spot,2025,365,365,0,
+eth_cm,perp,2025,365,365,0,

@@ -1,7 +1,6 @@
 """Export three four-month PNG rows per asset-year from saved KM curves."""
 from pathlib import Path
 import argparse
-import ast
 import hashlib
 import json
 import shutil
@@ -14,25 +13,23 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-HERE = Path(__file__).resolve().parent
-DEFAULT_INPUT = HERE.parents[2] / "sa_results/km_v8_final_01/appendix_km"
-PLOT_SOURCE = HERE / "plot_km_curves.py"
-
+from final_code import PAPER_DATA
+from final_code.section_5_1.appendix.plot_km_curves import DEFAULT_OUTPUT, decorate, draw_panel
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
+    parser.add_argument("--input", type=Path, help="Use curves generated in this Appendix KM output directory.")
+    parser.add_argument("--output", type=Path, help="Destination for the 30 figure rows.")
     args = parser.parse_args()
-    SOURCE = args.input / "data" / "monthly_km_curves_120s.csv"
-    OUT = args.input / "monthly_rows_120s"
-    OUT.mkdir(exist_ok=True)
-    # Reuse the same plotting definitions without importing or executing the
-    # event-reading or KM-fitting pipeline.
-    definitions = ast.parse(PLOT_SOURCE.read_text(encoding="utf-8"))
-    selected = [node for node in definitions.body if isinstance(node, ast.FunctionDef) and node.name in {"styles", "draw_panel", "decorate"}]
-    plot = {"plt": plt, "STEP": 0.25}
-    exec(compile(ast.Module(body=selected, type_ignores=[]), "existing KM plot definitions", "exec"), plot)
-    frame = pd.read_csv(SOURCE, dtype={"period": str})
+    source = PAPER_DATA / "section_5_1/monthly_km.csv.gz"
+    if args.input is not None:
+        source = args.input / "data/monthly_120s.csv"
+        legacy_source = args.input / "data/monthly_km_curves_120s.csv"
+        if not source.is_file() and legacy_source.is_file():
+            source = legacy_source
+    OUT = args.output or (args.input or DEFAULT_OUTPUT) / "rows"
+    OUT.mkdir(parents=True, exist_ok=True)
+    frame = pd.read_csv(source, dtype={"period": str}, float_precision="round_trip")
     curves = {}
     for (period, market, first), group in frame.groupby(["period", "market", "first"], sort=False):
         group = group.sort_values("timeline")
@@ -49,10 +46,10 @@ def main():
                 fig, axes = plt.subplots(1, 4, figsize=(18, 3.5), sharex=True, sharey=True)
                 incomplete = False
                 for axis, period in zip(axes, periods):
-                    incomplete |= plot["draw_panel"](axis, asset, period, "monthly", 120, curves)
+                    incomplete |= draw_panel(axis, asset, period, "monthly", 120, curves)
                 axes[0].set_ylabel("Probability unresolved")
-                plot["decorate"](fig, list(axes), asset, f"Monthly, {year}, {label}", incomplete)
-                name = f"km_{asset}_{year}_120s_row{row_number}_{label}.png"
+                decorate(fig, list(axes), asset, f"Monthly, {year}, {label}", incomplete)
+                name = f"{asset}_{year}_row{row_number}.png"
                 path = OUT / name
                 fig.savefig(path, dpi=100, bbox_inches="tight")
                 plt.close(fig)
@@ -90,9 +87,10 @@ overview page, row and months.
     source_script = Path(__file__).resolve()
     if source_script.parent != OUT:
         shutil.copyfile(source_script, OUT / source_script.name)
-    validation = dict(png_rows=30, graphs_per_row=4, source_overview_pages=10, rows_per_page=3, horizon_seconds=120, source_curve_csv=f"data/{SOURCE.name}", source_curve_sha256=hashlib.sha256(SOURCE.read_bytes()).hexdigest(), numerical_curve_refit=False, original_plotting_functions_reused=True, pngs_checked=True, rows=entries)
+    source_name = f"data/{source.name}" if args.input is not None else f"paper_data/section_5_1/{source.name}"
+    validation = dict(png_rows=30, graphs_per_row=4, source_overview_pages=10, rows_per_page=3, horizon_seconds=120, source_curve_csv=source_name, source_curve_sha256=hashlib.sha256(source.read_bytes()).hexdigest(), numerical_curve_refit=False, original_plotting_functions_reused=True, pngs_checked=True, rows=entries)
     (OUT / "validation.json").write_text(json.dumps(validation, indent=2), encoding="utf-8")
-    archive_path = OUT / "KM_monthly_rows_120s.zip"
+    archive_path = OUT / "km_rows.zip"
     names = [entry["file"] for entry in entries] + ["README.md", "row_index.csv", "validation.json", source_script.name]
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for name in names:

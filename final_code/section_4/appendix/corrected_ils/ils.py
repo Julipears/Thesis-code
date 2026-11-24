@@ -5,13 +5,13 @@ import hashlib
 import numpy as np
 import pandas as pd
 from .regression import run_regression
-from .plots import draw_regression, draw_table, draw_full_grid
+from .plots import APPENDIX_OUTPUT, draw_regression, draw_table, draw_full_grid
 
 HERE=Path(__file__).resolve().parent
-BASE=HERE.parents[3]/'hasbrouck_spec_audit/ils_correction'
-OUT=HERE.parents[3]/'hasbrouck_spec_audit/appendix_ils_correction'
-ROOT=HERE.parents[1]/'Paper-code'
-ACTIVITY=HERE/'data/eth_sampled_trade_activity.csv'
+ROOT=HERE.parents[3]
+BASE=ROOT/'hasbrouck_spec_audit/ils_correction'
+OUT=ROOT/APPENDIX_OUTPUT
+ACTIVITY=HERE/'data/eth_activity.csv'
 LATENCIES=['10ms','50ms','100ms','200ms','500ms','1s']
 REGIMES=[('2021','2021-01-01','2022-01-01'),('Jan-Jun 2022','2022-01-01','2022-07-01'),('Jul 2022-Mar 2023','2022-07-01','2023-04-01'),('Apr-Dec 2023','2023-04-01','2024-01-01'),('2024','2024-01-01','2025-01-01'),('2025','2025-01-01','2026-01-01')]
 MARKETS=['btc_um','btc_cm','eth_um','eth_cm']
@@ -23,7 +23,11 @@ required_inputs = [BASE / name for name in (
     'paired_observed_vs_full_grid_corrected.csv',
     'regime_summary_spot.csv',
 )]
-missing_inputs = [path.relative_to(ROOT).as_posix() for path in required_inputs if not path.is_file()]
+required_inputs += [ROOT/'hasbrouck_spec_audit/random_10_days_month_full_grid'/name for name in (
+    'regime_heatmaps/spot_ils_summary.csv', 'paired_ils_signed_summary.csv',
+)]
+required_inputs += [ROOT/f'vecm_hasbrouck3_{market}' for market in ('eth_um', 'eth_cm')]
+missing_inputs = [path.relative_to(ROOT).as_posix() for path in required_inputs if not path.exists()]
 if missing_inputs:
     raise SystemExit("Missing corrected ILS inputs:\n" + "\n".join(missing_inputs))
 OUT.mkdir(parents=True, exist_ok=True)
@@ -42,9 +46,9 @@ for regime,start,end in REGIMES:
     for (market,latency,series),group in selected.groupby(['market','latency','series']):
         regime_rows.append({'market':market,'latency':latency,'series':series,'regime':regime,'regime_start':start,'regime_end_exclusive':end,'median_ILS':group.ILS_mid.median(),'mean_ILS':group.ILS_mid.mean(),'median_ILS_original':group.ILS_mid_original.median(),'mean_ILS_original':group.ILS_mid_original.mean(),'model_intervals':len(group)})
 regime_summary=pd.DataFrame(regime_rows)
-regime_summary.to_csv(OUT/'full_grid_regime_summary_both_series_corrected.csv',index=False)
+regime_summary.to_csv(OUT/'full_grid_ils_by_series.csv',index=False)
 spot_summary=regime_summary[regime_summary.series.eq(SPOT)].rename(columns={'median_ILS':'median_spot_ILS','mean_ILS':'mean_spot_ILS'})
-spot_summary.to_csv(OUT/'full_grid_regime_summary_spot_corrected.csv',index=False)
+spot_summary.to_csv(OUT/'full_grid.csv',index=False)
 old_saved=pd.read_csv(ROOT/'hasbrouck_spec_audit/random_10_days_month_full_grid/regime_heatmaps/spot_ils_summary.csv')
 old_check=spot_summary.merge(old_saved,on=['market','latency','regime'],suffixes=('','_saved'),validate='one_to_one')
 assert np.allclose(old_check.median_ILS_original,old_check.median_spot_ILS_saved,rtol=0,atol=1e-14)
@@ -63,7 +67,7 @@ table['contract']=table.market.str[-2:].map({'um':'Linear','cm':'Inverse'})
 table['sort_market']=table.market.map({name:i for i,name in enumerate(MARKETS)})
 table['sort_latency']=table.latency.map({'1s':0,'100ms':1,'10ms':2})
 table=table.sort_values(['sort_market','sort_latency']).drop(columns=['sort_market','sort_latency'])
-table.to_csv(OUT/'appendix_table4_ils_robustness_corrected.csv',index=False)
+table.to_csv(OUT/'robustness.csv',index=False)
 old_table=pd.read_csv(ROOT/'hasbrouck_spec_audit/random_10_days_month_full_grid/paired_ils_signed_summary.csv')
 check=table.merge(old_table,on=['market','latency'],validate='one_to_one')
 assert np.allclose(check.mean_signed_delta_spot_pp_original,-check.signed_pp,rtol=0,atol=1e-12)
@@ -79,7 +83,7 @@ for i,row in enumerate(table.itertuples(index=False)):
     latex.append(f'{asset_label} & {contract_label} & {spacing} & {row.mean_signed_delta_spot_pp:.2f} & {row.mean_absolute_delta_spot_pp:.2f} & {row.different_leader_pct:.2f} '+r'\\')
     latex.append(r'\hline' if i%6==5 else r'\cline{2-6}' if i%3==2 else r'\cline{3-6}')
 latex += [r'\end{tabular}',r'\par\smallskip',r'\begin{minipage}{\textwidth}\footnotesize',r'\textit{Notes:} $\Delta\mathrm{ILS}=100(\mathrm{ILS}^{\mathrm{full\ grid}}_{\mathrm{spot}}-\mathrm{ILS}^{\mathrm{observed}}_{\mathrm{spot}})$, in percentage points. Absolute changes are averaged before aggregation. Comparisons use the same contract, date, UTC hour and latency. Only valid, unambiguous matched models are included. The sample has ten randomly selected dates per month during 2021--2025 and one random UTC hour per date.',r'\end{minipage}',r'\end{table}']
-(OUT/'appendix_table4_ils_robustness_corrected.tex').write_text('\n'.join(latex)+'\n',encoding='utf-8')
+(OUT/'table_4.tex').write_text('\n'.join(latex)+'\n',encoding='utf-8')
 draw_table(table,OUT)
 print(table[['market','latency','hours','mean_signed_delta_spot_pp','mean_absolute_delta_spot_pp','different_leader_pct']].to_string(index=False),flush=True)
 
@@ -117,9 +121,9 @@ for market in MARKETS:
     print(f'{market}: annual/regime quantiles and 2,000-replicate day-block intervals completed',flush=True)
 annual=pd.DataFrame(annual_rows)
 regime_boot=pd.DataFrame(regime_boot_rows)
-annual.to_csv(OUT/'annual_ils_quantiles_day_block_bootstrap_corrected.csv',index=False)
-regime_boot.to_csv(OUT/'regime_ils_quantiles_day_block_bootstrap_corrected.csv',index=False)
-regime_boot[regime_boot.mean_median_leader_disagree|regime_boot.ci_contains_half|regime_boot.mean_leader_changed_by_correction].to_csv(OUT/'regime_ils_boundary_and_aggregation_cases.csv',index=False)
+annual.to_csv(OUT/'ils_annual_bootstrap.csv',index=False)
+regime_boot.to_csv(OUT/'ils_regime_bootstrap.csv',index=False)
+regime_boot[regime_boot.mean_median_leader_disagree|regime_boot.ci_contains_half|regime_boot.mean_leader_changed_by_correction].to_csv(OUT/'ils_boundary_cases.csv',index=False)
 
 # Bracket transitions between actually sampled grid points instead of
 # interpolating unobserved latencies from a rounded heatmap annotation.
@@ -135,9 +139,9 @@ for (market,regime),group in main_summary.groupby(['market','regime']):
         if (values[i]-.5)*(values[i+1]-.5)<0:
             brackets.append(f'{LATENCIES[i]} to {LATENCIES[i+1]}')
     transitions.append({'market':market,'regime':regime,'transition_bracket':'; '.join(brackets),'spot_leads_at_10ms':bool(values[0]>.5),'spot_leads_at_1s':bool(values[-1]>.5),'median_leader_changed_by_correction':False})
-pd.DataFrame(transitions).to_csv(OUT/'main_heatmap_transition_brackets.csv',index=False)
+pd.DataFrame(transitions).to_csv(OUT/'ils_transitions.csv',index=False)
 validation['day_block_bootstrap']={'annual_cells':len(annual),'regime_cells':len(regime_boot),'replicates':2000,'seed':12345,'regime_mean_median_leader_disagreements':int(regime_boot.mean_median_leader_disagree.sum()),'regime_CIs_containing_half':int(regime_boot.ci_contains_half.sum()),'regime_mean_leader_changes_from_correction':int(regime_boot.mean_leader_changed_by_correction.sum())}
 validation['sources']={'update_frequency_csv':ACTIVITY.relative_to(ROOT).as_posix(),'update_frequency_csv_sha256':hashlib.sha256(ACTIVITY.read_bytes()).hexdigest(),'regression_code':'regression.py','main_corrected_results':BASE.relative_to(ROOT).as_posix(),'original_pdf':'the earlier paper draft'}
-(OUT/'appendix_validation.json').write_text(json.dumps(validation,indent=2),encoding='utf-8')
+(OUT/'validation.json').write_text(json.dumps(validation,indent=2),encoding='utf-8')
 print(regressions[['contract_type','latency','original_coefficient','original_p_value','corrected_coefficient','corrected_p_value','corrected_ci_lower','corrected_ci_upper']].to_string(index=False),flush=True)
 print(json.dumps(validation,indent=2),flush=True)

@@ -254,7 +254,7 @@ class TradeData:
         if num_entries > 1000:
             init_day = datetime.datetime.strptime(end_date, '%Y%m%d')
             while init_day > datetime.datetime.strptime(start_date, '%Y%m%d'):
-                binance_starttime = str(int(init_day.timestamp()*1000))
+                binance_starttime = str(int(init_day.replace(tzinfo=datetime.timezone.utc).timestamp() * 1000))
                 if self.source == 'Binance':
                     prefix = 'fapi'
                     if self.cm_um == 'cm':
@@ -268,7 +268,7 @@ class TradeData:
 
         else:
             init_day = datetime.datetime.strptime(start_date, '%Y%m%d')
-            binance_starttime = str(int(init_day.timestamp()*1000))
+            binance_starttime = str(int(init_day.replace(tzinfo=datetime.timezone.utc).timestamp() * 1000))
             if self.source == 'Binance':
                 prefix = 'fapi'
                 if self.cm_um == 'cm':
@@ -281,8 +281,8 @@ class TradeData:
         fr_binance = pd.concat(frs)
         fr_binance = fr_binance.drop_duplicates()
 
-        fr_binance[['fundingRate','fundingTime']] = fr_binance[['fundingRate','fundingTime']].astype(float)
-        fr_binance['fundingTime'] = fr_binance['fundingTime'].apply(lambda x: datetime.datetime.utcfromtimestamp(x/1000).replace(second=0, microsecond=0))
+        fr_binance['fundingRate'] = fr_binance['fundingRate'].astype(float)
+        fr_binance['fundingTime'] = pd.to_datetime(fr_binance['fundingTime'].astype('int64'), unit='ms').dt.floor('min')
         fr_binance = fr_binance[(fr_binance['fundingTime']>=datetime.datetime.strptime(start_date,'%Y%m%d'))&(fr_binance['fundingTime']<=datetime.datetime.strptime(end_date,'%Y%m%d'))]
 
         return fr_binance

@@ -2,11 +2,11 @@
 
 import argparse
 from pathlib import Path
-import re
-
 import pandas as pd
 
-ROOT = Path("sa_results/km_v8_final_01")
+from final_code import RESULTS
+from final_code.section_5_2.saved_fits import read_monthly_coefficients
+
 MARKETS = {"btc_um": ("BTC", "Linear"), "btc_cm": ("BTC", "Inverse"), "eth_um": ("ETH", "Linear"), "eth_cm": ("ETH", "Inverse")}
 ORDER = [("BTC", "Linear", "spot"), ("BTC", "Linear", "perp"), ("BTC", "Inverse", "spot"), ("BTC", "Inverse", "perp"), ("ETH", "Linear", "spot"), ("ETH", "Linear", "perp"), ("ETH", "Inverse", "spot"), ("ETH", "Inverse", "perp")]
 
@@ -20,23 +20,17 @@ def bucket(month):
 
 
 def read_monthly(run_dir, model, covariate):
-    rows = []
-    for market, (currency, contract) in MARKETS.items():
-        if model == "full":
-            root = run_dir / "aft_results_v5_without_spot_volatility" / market / "loglogistic" / "coefficients"
-        else:
-            result_dir = {"spread_spot_5min": "aft_results_v8_univariate_spread", "shock_size_bps": "aft_results_v8_univariate_shock_size"}[covariate]
-            root = run_dir / result_dir / market / "loglogistic" / "coefficients"
-        for path in sorted(root.glob("*_20??-??_coefficients.csv")):
-            m = re.match(r"(spot|perp)_(\d{4}-\d{2})_coefficients\.csv$", path.name)
-            if not m:
-                continue
-            origin, month = m.groups()
-            d = pd.read_csv(path)
-            x = d[(d.param == "alpha_") & (d.covariate == covariate)]
-            if not x.empty:
-                rows.append({"currency": currency, "contract": contract, "origin": origin, "month": month, "bucket": bucket(month), "coef": float(x.coef.iloc[0]), "model": model})
-    return pd.DataFrame(rows)
+    if model == "full":
+        spec, folder = "full", "aft_results_v5_without_spot_volatility"
+    else:
+        spec = {"spread_spot_5min": "spread", "shock_size_bps": "shock_size"}[covariate]
+        folder = f"aft_results_v8_univariate_{spec}"
+    table = read_monthly_coefficients(spec, folder, run_dir)
+    rows = table.loc[table["param"].eq("alpha_") & table["covariate"].eq(covariate)].copy()
+    rows["currency"] = rows["market"].map({market: label[0] for market, label in MARKETS.items()})
+    rows["contract"] = rows["market"].map({market: label[1] for market, label in MARKETS.items()})
+    rows["bucket"] = rows["period"].map(bucket)
+    return rows.rename(columns={"first": "origin"}).assign(model=model)
 
 
 def write_table(spread, shock, side, side_label, output_dir):
@@ -60,7 +54,7 @@ def write_table(spread, shock, side, side_label, output_dir):
             vals = [f"{x.loc[k, ratio]:.2f}\\%" for k in ORDER]
             lines.append(model_labels[model] + " (" + coefficient + ") & " + " & ".join(vals) + r" \\")
     lines += [r"\hline", r"\end{tabular}", rf"\label{{tab:{label}}}", r"\end{table}"]
-    (output_dir / f"{label}.tex").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (output_dir / f"{side}.tex").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def summarize(run_dir, covariate, label):
@@ -88,17 +82,17 @@ def summarize(run_dir, covariate, label):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=ROOT)
+    parser.add_argument("--input", type=Path, help="Read from this local run instead of the bundled coefficients.")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    output_dir = args.output or args.input / "analysis_outputs/aft_v8_univariate_results"
+    output_dir = args.output or RESULTS / "aft" / "midperiod"
     spread = summarize(args.input, "spread_spot_5min", "spread")
     shock = summarize(args.input, "shock_size_bps", "shock size")
     output_dir.mkdir(parents=True, exist_ok=True)
     for name, summary in (("spread", spread), ("shock_size", shock)):
-        summary.to_csv(output_dir / f"{name}_midperiod_entire_adjacent_comparison.csv", index=False)
+        summary.to_csv(output_dir / f"{name}.csv", index=False)
     pd.concat([spread, shock], ignore_index=True).to_csv(
-        output_dir / "midperiod_entire_adjacent_comparison.csv", index=False
+        output_dir / "comparison.csv", index=False
     )
     write_table(spread, shock, "before", "2021-01--2022-06", output_dir)
     write_table(spread, shock, "after", "2023-04--2025-12", output_dir)

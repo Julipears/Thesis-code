@@ -1,0 +1,17 @@
+market,first,date,period
+btc_cm,perp,2024-06-12,2024-06
+btc_cm,perp,2024-06-13,2024-06
+btc_cm,spot,2024-06-12,2024-06
+btc_cm,spot,2024-06-13,2024-06
+eth_cm,perp,2022-10-17,2022-10
+eth_cm,perp,2023-09-25,2023-09
+eth_cm,perp,2023-09-26,2023-09
+eth_cm,spot,2022-10-17,2022-10
+eth_cm,spot,2023-09-25,2023-09
+eth_cm,spot,2023-09-26,2023-09
+eth_um,perp,2025-10-30,2025-10
+eth_um,perp,2025-10-31,2025-10
+eth_um,perp,2025-11-03,2025-11
+eth_um,spot,2025-10-30,2025-10
+eth_um,spot,2025-10-31,2025-10
+eth_um,spot,2025-11-03,2025-11

@@ -1,0 +1,25 @@
+market,regime,transition_bracket,spot_leads_at_10ms,spot_leads_at_1s,median_leader_changed_by_correction
+btc_cm,2021,500ms to 1s,True,False,False
+btc_cm,2024,10ms to 50ms,True,False,False
+btc_cm,2025,10ms to 50ms,True,False,False
+btc_cm,Apr-Dec 2023,50ms to 100ms,True,False,False
+btc_cm,Jan-Jun 2022,200ms to 500ms,True,False,False
+btc_cm,Jul 2022-Mar 2023,500ms to 1s,True,False,False
+btc_um,2021,100ms to 200ms,False,True,False
+btc_um,2024,50ms to 100ms,False,True,False
+btc_um,2025,50ms to 100ms,False,True,False
+btc_um,Apr-Dec 2023,100ms to 200ms,False,True,False
+btc_um,Jan-Jun 2022,200ms to 500ms,False,True,False
+btc_um,Jul 2022-Mar 2023,200ms to 500ms,True,False,False
+eth_cm,2021,200ms to 500ms,True,False,False
+eth_cm,2024,50ms to 100ms,True,False,False
+eth_cm,2025,10ms to 50ms,True,False,False
+eth_cm,Apr-Dec 2023,100ms to 200ms,True,False,False
+eth_cm,Jan-Jun 2022,200ms to 500ms,True,False,False
+eth_cm,Jul 2022-Mar 2023,100ms to 200ms,True,False,False
+eth_um,2021,100ms to 200ms,False,True,False
+eth_um,2024,100ms to 200ms,False,True,False
+eth_um,2025,50ms to 100ms,False,True,False
+eth_um,Apr-Dec 2023,200ms to 500ms,False,True,False
+eth_um,Jan-Jun 2022,200ms to 500ms,False,True,False
+eth_um,Jul 2022-Mar 2023,200ms to 500ms,False,True,False

@@ -14,14 +14,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from survival_analysis_utils_final import atomic_pandas_csv, atomic_pandas_parquet
+from final_code import FULL_RUN
+from final_code.section_5_2 import RAW_METRICS
+from survival_utils import atomic_pandas_csv, atomic_pandas_parquet, utc_ns
 
 
 MARKETS = ("btc_um", "btc_cm", "eth_um", "eth_cm")
-ROOT = Path("sa_results/km_v8_final_01")
+ROOT = FULL_RUN
 SOURCE_DIR = ROOT / "aft_data_liquidity_monthly"
 OUTPUT_DIR = ROOT / "aft_data_liquidity_v5_log_covariates"
-RAW_METRICS = Path("open_interest_figures/native/raw_metrics")
 
 
 def _load_oi_metrics(market: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
@@ -33,12 +34,13 @@ def _load_oi_metrics(market: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.
         if not path.exists():
             continue
         frame = pd.read_csv(path, usecols=["create_time", "sum_open_interest", "sum_open_interest_value"])
-        frame["create_time"] = pd.to_datetime(frame["create_time"], utc=True, errors="coerce")
+        frame["create_time"] = utc_ns(frame["create_time"])
         for column in ("sum_open_interest", "sum_open_interest_value"):
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
         frames.append(frame.dropna(subset=["create_time"]))
     if not frames:
-        return pd.DataFrame(columns=["create_time", "open_interest"])
+        return pd.DataFrame({"create_time": pd.Series(dtype="datetime64[ns, UTC]"),
+                             "open_interest": pd.Series(dtype="float64")})
     metrics = pd.concat(frames, ignore_index=True).drop_duplicates("create_time", keep="last")
     source_column = "sum_open_interest" if market.endswith("_um") else "sum_open_interest_value" # this ensures the unit will always be units of the cryptocurrency
     metrics = metrics.rename(columns={source_column: "open_interest"})[["create_time", "open_interest"]]
@@ -46,20 +48,15 @@ def _load_oi_metrics(market: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.
 
 
 def reconstruct_file(source_path: Path, output_path: Path, market: str) -> dict:
-    frame = pd.read_parquet(source_path).copy()
-    frame["start_ts"] = pd.to_datetime(frame["start_ts"], utc=True, errors="coerce")
-    if frame["start_ts"].notna().any():
-        metrics = _load_oi_metrics(market, frame["start_ts"].min(), frame["start_ts"].max())
-    else:
-        metrics = pd.DataFrame(columns=["create_time", "open_interest"])
-
-    valid = frame.sort_values("start_ts").copy()
-    valid = valid.drop(columns=["create_time", "open_interest"], errors="ignore")
-    if metrics.empty:
-        valid["create_time"] = pd.NaT
-        valid["open_interest"] = np.nan
-    else:
-        valid = pd.merge_asof(
+    frame = pd.read_parquet(source_path).reset_index(drop=True)
+    frame["start_ts"] = utc_ns(frame["start_ts"])
+    frame = frame.drop(columns=["create_time", "open_interest"], errors="ignore")
+    frame["create_time"] = pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns, UTC]")
+    frame["open_interest"] = np.nan
+    valid = frame.loc[frame["start_ts"].notna(), ["start_ts"]].sort_values("start_ts")
+    if not valid.empty:
+        metrics = _load_oi_metrics(market, valid["start_ts"].min(), valid["start_ts"].max())
+        matched = pd.merge_asof(
             valid,
             metrics,
             left_on="start_ts",
@@ -67,28 +64,26 @@ def reconstruct_file(source_path: Path, output_path: Path, market: str) -> dict:
             direction="backward",
             allow_exact_matches=False,
         )
-        check = valid["create_time"].notna() & ~(valid["create_time"] < valid["start_ts"])
-        if check.any():
-            raise AssertionError(f"lookahead in {source_path}: {int(check.sum())} rows")
+        frame.loc[valid.index, "create_time"] = matched["create_time"].array
+        frame.loc[valid.index, "open_interest"] = matched["open_interest"].to_numpy()
 
     for source_column, output_column in (
         ("open_interest", "log_open_interest"),
         ("volume", "log_volume"),
         ("taker_long_short", "log_taker_long_short"),
     ):
-        values = pd.to_numeric(valid[source_column], errors="coerce")
+        values = pd.to_numeric(frame[source_column], errors="coerce")
         if values.dropna().lt(0).any():
             raise ValueError(f"negative values in {source_column}: {source_path.name}")
-        valid[output_column] = np.log1p(values.to_numpy(dtype=float))
+        frame[output_column] = np.log1p(values.to_numpy(dtype=float))
 
-    valid = valid.sort_index() if len(valid) == len(frame) else valid
-    atomic_pandas_parquet(valid, output_path)
+    atomic_pandas_parquet(frame, output_path)
     return {
         "source_file": source_path.name,
         "output_file": str(output_path),
         "market": market,
-        "rows": len(valid),
-        "open_interest_nonnull": int(valid["open_interest"].notna().sum()),
+        "rows": len(frame),
+        "open_interest_nonnull": int(frame["open_interest"].notna().sum()),
         "status": "written",
     }
 

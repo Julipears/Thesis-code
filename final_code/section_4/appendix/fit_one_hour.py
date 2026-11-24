@@ -83,7 +83,7 @@ def current_fit(prices: pd.DataFrame, latency: str, lag_structure: dict) -> tupl
         prices=prices,
         lag_structure=lag_structure,
         latency=latency,
-        interval="1H",
+        interval="1h",
         intercept=True,
         ticker=SYMBOL,
         source="Binance",

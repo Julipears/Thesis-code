@@ -8,7 +8,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from final_code import RESULTS
+
 HERE = Path(__file__).resolve().parent
+APPENDIX_OUTPUT = RESULTS / 'vecm' / 'appendix'
 
 
 LATENCIES = ["10ms", "100ms", "1s"]
@@ -150,7 +153,7 @@ def draw_full_grid(summary,out):
     assert set(display.regime.unique())=={row[0] for row in REGIMES}
     suffix='\nFull grid: 10 sampled days per month, one random hour per day'
     for asset,number in [('btc',9),('eth',10)]:
-        draw_heatmap(display,[f'{asset}_um',f'{asset}_cm'],f'appendix_fig{number}_{asset}_full_grid_ils_corrected',f'{asset.upper()} VECM price leadership by regime'+suffix, out)
+        draw_heatmap(display,[f'{asset}_um',f'{asset}_cm'],f'figure_{number}',f'{asset.upper()} VECM price leadership by regime'+suffix, out)
 
 
 def draw_regression(regressions,out):
@@ -159,8 +162,8 @@ def draw_regression(regressions,out):
         frequency_results[column]=regressions[f'corrected_{column}']
     figure,ax=_regression_figure(frequency_results)
     ax.legend(loc='lower left')
-    figure.savefig(out/'appendix_fig8_update_frequency_eth_corrected.png',dpi=100,bbox_inches='tight')
-    figure.savefig(out/'appendix_fig8_update_frequency_eth_corrected.pdf',bbox_inches='tight')
+    figure.savefig(out/'figure_8.png',dpi=100,bbox_inches='tight')
+    figure.savefig(out/'figure_8.pdf',bbox_inches='tight')
     plt.close(figure)
 
 
@@ -193,19 +196,25 @@ def draw_table(table,out):
         for start,label in [(1,'BTC'),(7,'ETH')]:
             first,last=image_table[start,0],image_table[start+5,0]
             ax.text(first.get_x()+first.get_width()/2,(first.get_y()+first.get_height()+last.get_y())/2,label,ha='center',va='center',transform=ax.transAxes,fontsize=11)
-        fig.savefig(out/'appendix_table4_ils_robustness_corrected.png',dpi=220,bbox_inches='tight')
-        fig.savefig(out/'appendix_table4_ils_robustness_corrected.pdf',bbox_inches='tight')
+        fig.savefig(out/'table_4.png',dpi=220,bbox_inches='tight')
+        fig.savefig(out/'table_4.pdf',bbox_inches='tight')
         plt.close(fig)
+
+
+def read_summary(directory: Path, name: str, old_name: str) -> pd.DataFrame:
+    path = directory / name
+    legacy_path = directory / old_name
+    return pd.read_csv(legacy_path if not path.is_file() and legacy_path.is_file() else path)
 
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input', type=Path, default=HERE / 'data')
-    parser.add_argument('--output', type=Path, default=HERE.parents[3] / 'hasbrouck_spec_audit/appendix_ils_correction')
+    parser.add_argument('--output', type=Path, default=APPENDIX_OUTPUT)
     args = parser.parse_args()
     out = args.output
     out.mkdir(parents=True, exist_ok=True)
-    draw_regression(pd.read_csv(args.input/'appendix_figure8_regression_before_after.csv'),out)
-    draw_table(pd.read_csv(args.input/'appendix_table4_ils_robustness_corrected.csv'),out)
-    draw_full_grid(pd.read_csv(args.input/'full_grid_regime_summary_spot_corrected.csv'),out)
+    draw_regression(read_summary(args.input, 'regression.csv', 'appendix_figure8_regression_before_after.csv'), out)
+    draw_table(read_summary(args.input, 'robustness.csv', 'appendix_table4_ils_robustness_corrected.csv'), out)
+    draw_full_grid(read_summary(args.input, 'full_grid.csv', 'full_grid_regime_summary_spot_corrected.csv'), out)
     print('Refreshed Figures 8-10 and Table 4 with the original appendix formatting.')

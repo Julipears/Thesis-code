@@ -1,6 +1,7 @@
 """Download daily perpetual volumes from monthly Binance kline archives and plot."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import io
+import argparse
 from pathlib import Path
 import threading
 import time
@@ -11,9 +12,14 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 import pandas as pd
+from final_code import PAPER_DATA, RESULTS
 import requests
 
-OUT = Path("daily_perpetual_volume_figures")
+OUT = RESULTS / "volume"
+ARCHIVES = OUT / "archives"
+_legacy_archives = Path("daily_perpetual_volume_figures/raw_monthly_klines")
+if not ARCHIVES.is_dir() and _legacy_archives.is_dir():
+    ARCHIVES = _legacy_archives
 LOCAL = threading.local()
 
 
@@ -21,7 +27,7 @@ def fetch(market, month):
     asset, margin = market.split("_")
     symbol = f"{asset.upper()}USD_PERP" if margin == "cm" else f"{asset.upper()}USDT"
     name = f"{symbol}-1d-{month}.zip"
-    path = OUT / "raw_monthly_klines" / market / name
+    path = ARCHIVES / market / name
     path.parent.mkdir(parents=True, exist_ok=True)
     cadence = "daily" if len(month) == 10 else "monthly"
     url = f"https://data.binance.vision/data/futures/{margin}/{cadence}/klines/{symbol}/1d/{name}"
@@ -98,7 +104,7 @@ def draw(data, grid_only=False):
             ax.set_xlabel("Year")
             fig.tight_layout()
             for ext in ["png", "pdf"]:
-                fig.savefig(OUT / f"{asset}_daily_volume_{kind}.{ext}", dpi=200, bbox_inches="tight")
+                fig.savefig(OUT / f"{asset}_{kind}.{ext}", dpi=200, bbox_inches="tight")
             plt.close(fig)
         fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True, sharey=not quantity)
         for ax, asset in zip(axes, ["btc", "eth"]):
@@ -107,7 +113,7 @@ def draw(data, grid_only=False):
         axes[-1].set_xlabel("Year")
         fig.tight_layout(rect=(0, 0, 1, .96))
         for ext in ([] if grid_only else ["png", "pdf"]):
-            fig.savefig(OUT / f"all_contracts_daily_volume_{kind}.{ext}", dpi=200, bbox_inches="tight")
+            fig.savefig(OUT / f"{kind}.{ext}", dpi=200, bbox_inches="tight")
         plt.close(fig)
         fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex=True,
                      sharey="row" if quantity else True)
@@ -132,7 +138,7 @@ def draw(data, grid_only=False):
         fig.suptitle("Perpetual Futures Volumes")
         fig.tight_layout(rect=(0, 0, 1, .96))
         for ext in ["png", "pdf"]:
-            fig.savefig(OUT / f"all_contracts_daily_volume_{kind}_2x2.{ext}", dpi=200, bbox_inches="tight")
+            fig.savefig(OUT / f"{kind}_grid.{ext}", dpi=200, bbox_inches="tight")
         plt.close(fig)
         fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex=True, sharey=False)
         for row, asset in enumerate(["btc", "eth"]):
@@ -156,13 +162,20 @@ def draw(data, grid_only=False):
         fig.suptitle("Perpetual Futures Volumes")
         fig.tight_layout(rect=(0, 0, 1, .96))
         for ext in ["png", "pdf"]:
-            fig.savefig(OUT / f"all_contracts_daily_volume_{kind}_separate_yaxes_2x2.{ext}",
+            fig.savefig(OUT / f"{kind}_separate_axes.{ext}",
                         dpi=200, bbox_inches="tight")
         plt.close(fig)
 
 
 def main():
-    OUT.mkdir(exist_ok=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--refresh", action="store_true", help="Rebuild daily volumes from the Binance archives.")
+    args = parser.parse_args()
+    OUT.mkdir(parents=True, exist_ok=True)
+    if not args.refresh:
+        daily = pd.read_csv(PAPER_DATA / "section_5_2/daily_volume.csv", parse_dates=["date"])
+        draw(daily)
+        return
     tasks = [(market, str(month)) for market in ["btc_um", "btc_cm", "eth_um", "eth_cm"]
              for month in pd.period_range("2021-01", "2025-12", freq="M")]
     frames = []
@@ -175,7 +188,7 @@ def main():
     data = pd.concat(frames, ignore_index=True).sort_values(["market", "date"])
     assert not data.duplicated(["market", "date"]).any()
     assert data.groupby("market").size().eq(1826).all()
-    data.to_csv(OUT / "daily_perpetual_volumes_2021_2025.csv", index=False)
+    data.to_csv(OUT / "daily_volume.csv", index=False)
     data.groupby("market").agg(days=("date", "size"), first_date=("date", "min"), last_date=("date", "max")).to_csv(OUT / "coverage.csv")
     draw(data)
     (OUT / "README.md").write_text(

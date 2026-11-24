@@ -4,6 +4,7 @@ sa_btc_cm/
 sa_eth_um/
 sa_eth_cm/
 sa_results/
+/results/
 
 # VECM/Hasbrouck results
 vecm_hasbrouck2_um/
@@ -34,6 +35,7 @@ latex_tables/
 
 __pycache__/
 *.py[cod]
+.venv/
 
 .jupyter-monitor/
 .jupyter-test/
@@ -66,3 +68,7 @@ daily_perpetual_volume_figures/
 tools/
 
 archive/
+
+# Curated inputs for reproducing the paper
+!/paper_data/**/*.csv.gz
+!/paper_data/reviewer_sample/**/*.parquet

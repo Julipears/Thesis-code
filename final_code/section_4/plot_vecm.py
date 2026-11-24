@@ -7,6 +7,7 @@ families and their summary CSV files.
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import re
 
@@ -19,9 +20,10 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from final_code import PAPER_DATA, RESULTS
 
-ALPHA_OUT = Path("vecm_hasbrouck3_alpha_plots")
-HEATMAP_OUT = Path("vecm_regime_heatmaps_april2023")
+ALPHA_OUT = RESULTS / "vecm" / "alpha"
+HEATMAP_OUT = RESULTS / "vecm" / "ils"
 LATENCIES = ["10ms", "50ms", "100ms", "200ms", "500ms", "1s"]
 MONTHS = pd.date_range("2021-01-01", "2025-12-01", freq="MS")
 
@@ -98,11 +100,16 @@ def _load_alpha_summary() -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.concat(summaries, ignore_index=True), pd.DataFrame(coverage)
 
 
-def generate_alpha_over_time() -> None:
+def generate_alpha_over_time(*, from_run: bool = True) -> None:
     """Generate the BTC and ETH six-panel monthly-alpha figures."""
     ALPHA_OUT.mkdir(parents=True, exist_ok=True)
-    summary, coverage = _load_alpha_summary()
-    summary.to_csv(ALPHA_OUT / "monthly_alpha_summary.csv", index=False)
+    if from_run:
+        summary, coverage = _load_alpha_summary()
+    else:
+        source = PAPER_DATA / "section_4"
+        summary = pd.read_csv(source / "monthly_alpha.csv", parse_dates=["month"])
+        coverage = pd.read_csv(source / "alpha_coverage.csv")
+    summary.to_csv(ALPHA_OUT / "monthly_alpha.csv", index=False)
     coverage.to_csv(ALPHA_OUT / "input_coverage.csv", index=False)
 
     for asset in ["btc", "eth"]:
@@ -136,8 +143,8 @@ def generate_alpha_over_time() -> None:
             "Monthly median of hourly models; basis = log spot - log perpetual",
             fontsize=14,
         )
-        fig.savefig(ALPHA_OUT / f"{asset}_alpha_over_time.png", dpi=200, bbox_inches="tight")
-        fig.savefig(ALPHA_OUT / f"{asset}_alpha_over_time.pdf", bbox_inches="tight")
+        fig.savefig(ALPHA_OUT / f"{asset}_alpha.png", dpi=200, bbox_inches="tight")
+        fig.savefig(ALPHA_OUT / f"{asset}_alpha.pdf", bbox_inches="tight")
         plt.close(fig)
 
     (ALPHA_OUT / "README.md").write_text(
@@ -147,7 +154,7 @@ def generate_alpha_over_time() -> None:
         "in the four vecm_hasbrouck3 folders. Blue: linear; orange: inverse. Solid: spot; dashed: "
         "perpetual. Basis orientation is log spot minus log perpetual.\n\n"
         "Duplicate hourly keys with conflicting alpha values are excluded; consistent duplicates "
-        "are counted once. input_coverage.csv records exclusions, and monthly_alpha_summary.csv "
+        "are counted once. input_coverage.csv records exclusions, and monthly_alpha.csv "
         "contains medians, means and observation counts.\n",
         encoding="utf-8",
     )
@@ -155,7 +162,7 @@ def generate_alpha_over_time() -> None:
 
 def generate_separate_alpha_plots() -> None:
     """Generate one figure for each asset and requested latency."""
-    summary_path = ALPHA_OUT / "monthly_alpha_summary.csv"
+    summary_path = ALPHA_OUT / "monthly_alpha.csv"
     if not summary_path.exists():
         raise FileNotFoundError(f"Run generate_alpha_over_time first; missing {summary_path}")
     out = ALPHA_OUT / "separate"
@@ -348,30 +355,45 @@ def draw_spot_by_contract(summary: pd.DataFrame) -> None:
     HEATMAP_OUT.mkdir(parents=True, exist_ok=True)
     for margin, label in [("um", "Linear (UM)"), ("cm", "Inverse (CM)")]:
         draw(summary, [f"btc_{margin}", f"eth_{margin}"],
-             f"hasbrouck3_{margin}_spot_heatmap",
+             f"spot_ils_{margin}",
              f"{label} VECM spot price leadership by regime")
 
 
-def generate_regime_heatmaps() -> None:
+def generate_regime_heatmaps(*, from_run: bool = True) -> None:
     """Generate two spot-only regime heatmaps and their summary CSV files."""
     HEATMAP_OUT.mkdir(parents=True, exist_ok=True)
-    data = pd.concat([load_market(market) for market in CONFIGS], ignore_index=True)
-    summary = summarize(data)
-    summary.to_csv(HEATMAP_OUT / "vecm_regime_spot_ils_summary.csv", index=False)
-    perspective_summary = summarize_perspectives(data)
-    perspective_summary.to_csv(HEATMAP_OUT / "vecm_regime_spot_perp_ils_summary.csv", index=False)
-    data.groupby(["market", "latency"])["interval"].agg(
-        first_interval="min", last_interval="max", model_intervals="nunique"
-    ).reset_index().to_csv(HEATMAP_OUT / "vecm_input_coverage.csv", index=False)
+    if from_run:
+        data = pd.concat([load_market(market) for market in CONFIGS], ignore_index=True)
+        summary = summarize(data)
+        perspectives = summarize_perspectives(data)
+        coverage = data.groupby(["market", "latency"])["interval"].agg(
+            first_interval="min", last_interval="max", model_intervals="nunique"
+        ).reset_index()
+    else:
+        source = PAPER_DATA / "section_4"
+        summary = pd.read_csv(source / "spot_ils.csv")
+        perspectives = pd.read_csv(source / "ils_by_series.csv").rename(
+            columns={"series": "perspective", "median_ILS_corrected": "median_ILS",
+                     "mean_ILS_corrected": "mean_ILS"}
+        )
+        perspectives["series"] = perspectives["perspective"]
+        perspectives["contract"] = perspectives["market"].map({market: config[3] for market, config in CONFIGS.items()})
+        coverage = pd.read_csv(source / "vecm_coverage.csv")
+    summary.to_csv(HEATMAP_OUT / "spot_ils.csv", index=False)
+    perspectives.to_csv(HEATMAP_OUT / "ils_by_series.csv", index=False)
+    coverage.to_csv(HEATMAP_OUT / "coverage.csv", index=False)
     draw_spot_by_contract(summary)
     print(summary.groupby("market")["model_intervals"].sum().to_string())
     print(f"Saved outputs to {HEATMAP_OUT}")
 
 
 def main() -> None:
-    generate_alpha_over_time()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--from-run", action="store_true", help="Summarize the local hourly results instead of the published summaries.")
+    args = parser.parse_args()
+    generate_alpha_over_time(from_run=args.from_run)
     generate_separate_alpha_plots()
-    generate_regime_heatmaps()
+    generate_regime_heatmaps(from_run=args.from_run)
 
 
 if __name__ == "__main__":

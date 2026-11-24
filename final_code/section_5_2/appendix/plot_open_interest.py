@@ -7,6 +7,7 @@ without another data pull.
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import io
+import argparse
 from pathlib import Path
 import threading
 import time
@@ -18,9 +19,11 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from final_code import PAPER_DATA, RESULTS
+from final_code.section_5_2 import RAW_METRICS
 import requests
 
-OUT = Path("open_interest_figures/native")
+OUT = RESULTS / "open_interest"
 START = pd.Timestamp("2021-01-01", tz="UTC")
 END = pd.Timestamp("2026-01-01", tz="UTC")
 LOCAL = threading.local()
@@ -49,6 +52,9 @@ def source_days(asset, margin):
     Binance began publishing those archives) and avoids thousands of known 404s.
     """
     path = Path(f"sa_{asset}_{margin}/metrics_cache/{symbol_for(asset, margin)}_{margin}_liquidity_metrics.csv.gz")
+    if not path.is_file():
+        daily = pd.read_csv(PAPER_DATA / "section_5_2/daily_open_interest.csv", usecols=["market", "date"])
+        return sorted(daily.loc[daily["market"].eq(f"{asset}_{margin}"), "date"].unique())
     frame = pd.read_csv(path, usecols=["create_time"])
     dates = pd.to_datetime(frame.create_time, utc=True, errors="raise")
     dates = dates.loc[dates.ge(START) & dates.lt(END)]
@@ -57,7 +63,7 @@ def source_days(asset, margin):
 
 def fetch_day(asset, margin, day):
     market = f"{asset}_{margin}"
-    cache = OUT / "raw_metrics" / market / f"{day}.csv.gz"
+    cache = RAW_METRICS / market / f"{day}.csv.gz"
     cache.parent.mkdir(parents=True, exist_ok=True)
     url = metrics_url(asset, margin, day)
     frame = None
@@ -130,13 +136,19 @@ def draw(daily):
              ha="center", fontsize=9)
     fig.tight_layout(rect=(0, .07, 1, .96))
     for extension in ["png", "pdf"]:
-        fig.savefig(OUT / f"open_interest_native_2x2.{extension}", dpi=250, bbox_inches="tight")
-        fig.savefig(OUT / f"open_interest_positions_2x2.{extension}", dpi=250, bbox_inches="tight")
+        fig.savefig(OUT / f"open_interest.{extension}", dpi=250, bbox_inches="tight")
     plt.close(fig)
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--refresh", action="store_true", help="Recalculate daily means from the Binance archives.")
+    args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
+    if not args.refresh:
+        daily = pd.read_csv(PAPER_DATA / "section_5_2/daily_open_interest.csv", parse_dates=["date"])
+        draw(daily)
+        return
     tasks = [(asset, margin, day)
              for asset in ["btc", "eth"] for margin in ["um", "cm"]
              for day in source_days(asset, margin)]
@@ -164,7 +176,7 @@ def main():
     daily = daily.sort_values(["market", "date"])
     if daily.duplicated(["market", "date"]).any():
         raise ValueError("Duplicate market-day observations")
-    daily.to_csv(OUT / "daily_open_interest_base_units.csv", index=False)
+    daily.to_csv(OUT / "daily_open_interest.csv", index=False)
     coverage = daily.groupby("market").agg(first_date=("date", "min"), last_date=("date", "max"), days=("date", "size"))
     coverage.to_csv(OUT / "coverage.csv")
     draw(daily)
@@ -172,11 +184,11 @@ def main():
         "# Open-interest positions in base-asset units\n\n"
         "The plotted definition uses `sum_open_interest` for USD-M linear markets and "
         "`sum_open_interest_value` for COIN-M inverse markets. Both source fields are retained "
-        "in every raw archive and their daily means are saved in `daily_open_interest_base_units.csv`. "
+        "in every raw archive and their daily means are saved in `daily_open_interest.csv`. "
         "This puts BTC panels in BTC and ETH panels in ETH. Missing dates are gaps, not zeroes. "
         "Dates follow the coverage of the paper metric caches. Source URLs and retrieval statuses are in `retrieval_status.csv`.\n", encoding="utf-8")
     print(coverage.to_string(), flush=True)
-    print(f"Saved open-interest positions plot to {OUT / 'open_interest_native_2x2.png'}", flush=True)
+    print(f"Saved open-interest plot to {OUT / 'open_interest.png'}", flush=True)
 
 
 if __name__ == "__main__":

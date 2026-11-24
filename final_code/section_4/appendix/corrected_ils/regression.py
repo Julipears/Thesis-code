@@ -40,7 +40,7 @@ def run_regression(BASE, ROOT, ACTIVITY, OUT):
     analysis['perp_leadership_corrected']=.5-analysis.ILS_mid
     assert np.allclose(analysis.log_perp_to_spot_observed_bin_ratio,np.log((analysis.perp_observed_bin_count+1)/(analysis.spot_observed_bin_count+1)))
     regressions = fit_regressions(analysis)
-    regressions.to_csv(OUT/'appendix_figure8_regression_before_after.csv',index=False)
+    regressions.to_csv(OUT/'regression.csv',index=False)
     analysis.to_parquet(OUT/'appendix_figure8_hourly_inputs_corrected.parquet',index=False)
 
     # Values recorded in notebook cell 81 (rounded to six decimals).
@@ -50,7 +50,7 @@ def run_regression(BASE, ROOT, ACTIVITY, OUT):
         coefficient,p_value,n_obs=expected[(row.contract_type,row.latency)]
         checks.append({'contract_type':row.contract_type,'latency':row.latency,'coefficient_error_vs_rounded_notebook':row.original_coefficient-coefficient,'p_value_error_vs_rounded_notebook':row.original_p_value-p_value,'n_obs_difference':row.n_obs-n_obs})
     checks=pd.DataFrame(checks)
-    checks.to_csv(OUT/'figure8_original_reproduction_check.csv',index=False)
+    checks.to_csv(OUT/'regression_check.csv',index=False)
     validation={'max_coefficient_error':float(checks.coefficient_error_vs_rounded_notebook.abs().max()),'max_p_value_error':float(checks.p_value_error_vs_rounded_notebook.abs().max()),'max_n_obs_difference':int(checks.n_obs_difference.abs().max())}
     print('Original Figure 8 reproduction:', validation, flush=True)
     assert checks.coefficient_error_vs_rounded_notebook.abs().max()<5.01e-7
