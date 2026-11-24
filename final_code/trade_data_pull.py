@@ -1146,17 +1146,23 @@ class DataTransformations:
     def __init__(self, interval='1D'):
         self.interval=interval
 
-    def get_google(self, start, end):
-        pytrends = TrendReq(hl='en-US', tz=0)
+    def get_google(self, start, end) -> pd.DataFrame:
+        """Return Bitcoin search interest for dates given as YYYYMMDD."""
+        from pytrends.request import TrendReq
 
-        pytrends.build_payload(
+        start_date = datetime.datetime.strptime(start, "%Y%m%d").date()
+        end_date = datetime.datetime.strptime(end, "%Y%m%d").date()
+        trends = TrendReq(hl="en-US", tz=0)
+        trends.build_payload(
             kw_list=["Bitcoin"],
-            timeframe=f"{datetime.datetime.strfptime(start, '%Y%m%d').strftime('%Y-%m-%d')} {datetime.datetime.strfptime(end, '%Y%m%d').strftime('%Y-%m-%d')}",
-            geo=""
+            timeframe=f"{start_date} {end_date}",
+            geo="",
         )
 
-        data = pytrends.interest_over_time()
-        google_sentiment = data[["Bitcoin"]]
+        data = trends.interest_over_time()
+        if data.empty:
+            return data.reindex(columns=["Bitcoin"])
+        return data[["Bitcoin"]]
 
     def spread_basis(self, data):
         pass

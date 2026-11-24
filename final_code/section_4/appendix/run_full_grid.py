@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import calendar
 import csv
 import datetime as dt
+import errno
 import json
 import os
 from pathlib import Path
@@ -184,16 +185,33 @@ def record_failure(task, error):
     log(f"ERROR task={task} {error}; restarting worker")
 
 
-def supervise(plan):
-    # Lock is released by Windows even if the supervisor crashes.
-    import msvcrt
-    lock = (OUT / "supervisor.lock").open("a+b")
-    lock.seek(0)
-    if lock.read(1) == b"":
-        lock.write(b"0")
-        lock.flush()
-    lock.seek(0)
-    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+@contextmanager
+def _supervisor_lock():
+    OUT.mkdir(parents=True, exist_ok=True)
+    lock_path = OUT / "supervisor.lock"
+    # Closing the file releases the lock, including when the process exits.
+    with lock_path.open("a+b") as lock:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
+                raise RuntimeError(f"Another full-grid supervisor holds {lock_path}") from exc
+            raise
+        yield
+
+
+@_supervisor_lock()
+def supervise(plan=None):
+    if plan is None:
+        plan = prepare()
     try:
         import psutil
     except ImportError:
@@ -274,8 +292,6 @@ def supervise(plan):
             worker_process.wait()
         write_json(OUT / "status.json", dict(**progress(plan), status="supervisor_error", checked_at=now(), error=traceback.format_exc()))
         raise
-    finally:
-        lock.close()
 
 
 if __name__ == "__main__":
@@ -283,14 +299,13 @@ if __name__ == "__main__":
     parser.add_argument("--worker", action="store_true")
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
-    plan = prepare()
     if args.prepare_only:
-        print(json.dumps(progress(plan)))
+        print(json.dumps(progress(prepare())))
     elif args.worker:
         try:
-            sys.exit(worker(plan))
+            sys.exit(worker(prepare()))
         except Exception:
             traceback.print_exc()
             sys.exit(1)
     else:
-        supervise(plan)
+        supervise()

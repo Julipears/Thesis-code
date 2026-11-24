@@ -153,7 +153,7 @@ class BinanceData:
                                 if self.convert_tz is not None:
                                     df_vol = df_vol.with_columns([
                                         pl.col('timestamp')
-                                        .dt.convert_time_zone(convert_tz)
+                                        .dt.convert_time_zone(self.convert_tz)
                                         .dt.replace_time_zone(None)
                                         .alias('timestamp')
                                     ])
